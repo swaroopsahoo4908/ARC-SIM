@@ -1572,11 +1572,15 @@ public class ArcSimGui extends JFrame {
     public static void main(String[] args) {
         // Silences "ERROR StatusLogger Log4j2 could not find a logging implementation..." printed
         // by a bundled dependency (Apache POI, via log4j-api) at first use. This is a harmless
-        // startup diagnostic -- it already falls back to a working console logger on its own
-        // ("Using SimpleLogger...") -- but printed with an "ERROR" tag into this app's own log
-        // panel it reads as a real failure. Must be set before any log4j class loads, so this is
-        // the first line of main().
-        System.setProperty("log4j2.StatusLogger.level", "OFF");
+        // startup diagnostic -- log4j-api falls back to its own built-in SimpleLoggerContextFactory
+        // regardless -- but printed with an "ERROR" tag into this app's own log panel it reads as a
+        // real failure. log4j2.StatusLogger.level=OFF does NOT suppress this specific message (that
+        // property only filters the StatusLogger's own listener output, not this bootstrap-time
+        // provider-search warning); explicitly naming the fallback provider via
+        // log4j2.loggerContextFactory skips the failed search entirely, so no warning is ever
+        // logged in the first place. Verified empirically. Must be set before any log4j class
+        // loads, so this is the first line of main().
+        System.setProperty("log4j2.loggerContextFactory", "org.apache.logging.log4j.simple.SimpleLoggerContextFactory");
 
         installDockIcon(loadAppIcon());
         if (!AppConfig.get().firstRunComplete) {
