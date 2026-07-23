@@ -1,4 +1,4 @@
-# Arc-Sim
+# ARC-SIM
 
 *A Skylight Rocketry venture — a Skylight Industries company.*
 
