@@ -1,6 +1,5 @@
 #!/bin/bash
 # Arc-Sim launcher (macOS). Double-click this file (or run it from Terminal) to start the app.
-# A Skylight Rocketry venture -- a Skylight Industries company.
 #
 # Finder marks downloaded .command files as untrusted by default; if double-clicking does nothing
 # or macOS refuses to run it, right-click ArcSim.command -> Open once to approve it, or run
