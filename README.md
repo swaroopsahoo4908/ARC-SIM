@@ -16,11 +16,3 @@ Plus a *Data Viewer* tab for browsing `.parquet`/`.csv`/`.xlsx` output.
 
 Double-click `ArcSim.command` (Mac) or `ArcSim.bat` (Windows) — needs Java 17+, nothing else to install. Self-contained: settings live in a hidden file next to the jar, file dialogs always start in the app's own folder. First launch shows a one-time setup dialog for an optional weather API key.
 
-## Notes
-
-- Every run auto-names its output with a timestamp — never overwrites a prior result.
-- Cancel is honored mid-run everywhere; partial results are kept.
-- Live leaderboards show best-result-so-far during long runs.
-- CLI available for Engines 1 and 2 (`java -jar ArcSim.jar fullsweep ...` / `design ...`); Engines 3/4 are GUI-only.
-
-Full technical docs are in `README.md` in the project folder; a plain-language walkthrough is in `QUICKSTART.md`.
