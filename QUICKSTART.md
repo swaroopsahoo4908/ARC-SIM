@@ -1,18 +1,12 @@
 # Arc-Sim Quickstart Guide
 
-*A Skylight Rocketry venture -- a Skylight Industries company.*
-
 This is a plain-language walkthrough for getting Arc-Sim running and using it for the first time.
 For technical details on how each engine works internally, see `README.md`.
 
 ## 1. Requirements
 
-- macOS or Windows.
 - A Java 17 (or newer) runtime. If you don't already have one, download the free Eclipse Temurin
   build for your OS from [adoptium.net](https://adoptium.net) and install it before continuing.
-
-You do *not* need Maven, an IDE, or any other developer tooling -- `ArcSim.jar` bundles everything
-Arc-Sim needs to run.
 
 ## 2. Installing
 
@@ -27,17 +21,16 @@ You should have received a folder containing at least these files:
 | `QUICKSTART.md` | This guide |
 | `README.md` | Technical/engineering documentation |
 
-Copy the whole folder anywhere convenient (your Desktop, Documents, an external drive -- it doesn't
+Copy the whole folder anywhere convenient (your Desktop, Documents, an external drive, it doesn't
 matter, nothing is hardcoded to one location). Keep all the files above together in the same
 folder; the launchers expect `ArcSim.jar` to sit right next to them.
-
 Arc-Sim is fully self-contained: it only ever reads and writes files inside this folder (your
 `.ork` files, run output, and its own settings file, a hidden `.arc-sim-config.properties` written
 next to `ArcSim.jar`). Nothing is installed or written anywhere else on your computer, so you can
 move, copy, rename, or re-zip the whole folder freely -- it'll keep working wherever it ends up.
 
 *macOS*: double-click `ArcSim.command`. The first time, macOS may refuse to run it (files
-downloaded or copied from elsewhere are untrusted by default) -- if so, right-click
+downloaded or copied from elsewhere are untrusted by default); if so, right-click
 `ArcSim.command` and choose *Open* once, then confirm. After that, double-clicking works normally.
 
 *Windows*: double-click `ArcSim.bat`.
@@ -62,7 +55,7 @@ same folder as `ArcSim.jar`/`ArcSim.command` each time you launch it, then follo
 you browse next for the rest of that session -- there's no separate working-folder setting to
 configure or get out of sync with where you actually keep the app.
 
-## 4. The four engines, at a glance
+## 4. The four engines.
 
 Arc-Sim opens with one tab per engine, plus a Data Viewer tab. Each engine tab has its own form,
 a *Run* button, a progress bar, and a live log at the bottom of the window.
@@ -122,7 +115,7 @@ document.
 - *The Terminal window doesn't minimize itself on launch (Mac)*: `ArcSim.command` tries to minimize
   its own Terminal window automatically once it's confirmed Java is present. If macOS prompts for
   permission for Terminal to control Terminal, allow it (System Settings > Privacy & Security >
-  Automation); otherwise this is harmless to ignore -- you can just minimize the window yourself,
+  Automation); otherwise this is harmless to ignore; you can just minimize the window yourself,
   it doesn't affect the app.
-- *Anything else*: the log panel at the bottom of the window is the first place to look -- errors
-  are printed there in plain language, not just a stack trace.
+- *Anything else*: the log panel at the bottom of the window is the first place to look; errors
+  should be printed there in plain language, not just a stack trace.
