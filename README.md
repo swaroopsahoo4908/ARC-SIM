@@ -1,6 +1,5 @@
 # ARC-SIM
 
-*A Skylight Rocketry venture — a Skylight Industries company.*
 
 Rocket flight simulation and design toolkit built on the OpenRocket core engine (RK4 integration, Barrowman aerodynamics). Four engines, one desktop app.
 
