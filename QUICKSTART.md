@@ -1,7 +1,5 @@
 # Arc-Sim Quickstart Guide
 
-*A Skylight Rocketry venture -- a Skylight Industries company.*
-
 This is a plain-language walkthrough for getting Arc-Sim running and using it for the first time.
 For technical details on how each engine works internally, see `README.md`.
 
