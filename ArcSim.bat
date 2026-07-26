@@ -1,6 +1,5 @@
 @echo off
 rem Arc-Sim launcher (Windows). Double-click this file to start the app.
-rem A Skylight Rocketry venture -- a Skylight Industries company.
 
 setlocal
 cd /d "%~dp0"
