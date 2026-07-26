@@ -90,6 +90,13 @@ public class ArcSimGui extends JFrame {
         leftStatus.add(etaLabel);
         statusBar.add(leftStatus, BorderLayout.WEST);
 
+        JButton copyLogButton = new JButton("Copy Log");
+        copyLogButton.setToolTipText("Copies the full contents of the log panel to the clipboard.");
+        copyLogButton.addActionListener(e -> {
+            java.awt.datatransfer.StringSelection sel = new java.awt.datatransfer.StringSelection(log.getText());
+            Toolkit.getDefaultToolkit().getSystemClipboard().setContents(sel, null);
+            statusLabel.setText("Log copied to clipboard.");
+        });
         JButton clearLogButton = new JButton("Clear Log");
         clearLogButton.addActionListener(e -> log.setText(""));
         JPanel rightButtons = new JPanel(new FlowLayout(FlowLayout.RIGHT));
@@ -104,6 +111,7 @@ public class ArcSimGui extends JFrame {
                 appendLog("Cancel requested -- stopping at the next safe checkpoint...\n");
             }
         });
+        rightButtons.add(copyLogButton);
         rightButtons.add(clearLogButton);
         rightButtons.add(cancelButton);
         statusBar.add(rightButtons, BorderLayout.EAST);
@@ -752,6 +760,9 @@ public class ArcSimGui extends JFrame {
         leaderboards.add(mainLeaderboard);
         leaderboards.add(localLeaderboard);
 
+        JLabel engine4EtaLabel = new JLabel(" ");
+        engine4EtaLabel.setFont(engine4EtaLabel.getFont().deriveFont(Font.BOLD));
+
         JButton runButton = new JButton("Run Weather-Driven Design (Solve + CAD + Sweep + Margin Fins)");
         stylePrimaryButton(runButton);
         runButton.addActionListener(e -> {
@@ -796,13 +807,27 @@ public class ArcSimGui extends JFrame {
 
             mainLeaderboard.clear();
             localLeaderboard.clear();
+            engine4EtaLabel.setText("Starting...");
             runJob("Engine 4: Weather-Driven Design", listener -> {
-                WeatherDrivenDesign.Result result = WeatherDrivenDesign.run(
-                        runner, ork, effective, windStdDevMs, turbulencePct,
-                        (Double) targetApogee.getValue(), (Double) targetTimeMin.getValue(), (Double) targetTimeMax.getValue(),
-                        site, selection, bounds, sweepSamples, outDir, listener, mainLeaderboard::update, localLeaderboard::update
-                );
-                if (result != null && result.runDir != null) openDirectory(result.runDir);
+                ProgressListener combined = (processed, total, etaSeconds) -> {
+                    listener.onProgress(processed, total, etaSeconds);
+                    SwingUtilities.invokeLater(() -> {
+                        if (total > 0) {
+                            engine4EtaLabel.setText(String.format("Progress: %,d / %,d -- ETA %s",
+                                    processed, total, Double.isNaN(etaSeconds) ? "--" : EtaTracker.formatDuration(etaSeconds)));
+                        }
+                    });
+                };
+                try {
+                    WeatherDrivenDesign.Result result = WeatherDrivenDesign.run(
+                            runner, ork, effective, windStdDevMs, turbulencePct,
+                            (Double) targetApogee.getValue(), (Double) targetTimeMin.getValue(), (Double) targetTimeMax.getValue(),
+                            site, selection, bounds, sweepSamples, outDir, combined, mainLeaderboard::update, localLeaderboard::update
+                    );
+                    if (result != null && result.runDir != null) openDirectory(result.runDir);
+                } finally {
+                    SwingUtilities.invokeLater(() -> engine4EtaLabel.setText("Done."));
+                }
             });
         });
 
@@ -815,7 +840,10 @@ public class ArcSimGui extends JFrame {
 
         JPanel panel = new JPanel(new BorderLayout());
         panel.add(verticalSplit(top, leaderboards, 0.6), BorderLayout.CENTER);
-        panel.add(buttonRow(runButton), BorderLayout.SOUTH);
+        JPanel bottomRow = new JPanel(new BorderLayout());
+        bottomRow.add(engine4EtaLabel, BorderLayout.NORTH);
+        bottomRow.add(buttonRow(runButton), BorderLayout.SOUTH);
+        panel.add(bottomRow, BorderLayout.SOUTH);
         return withPadding(panel);
     }
 
