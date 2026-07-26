@@ -53,8 +53,12 @@ public class FullFactorialSweep {
 
     public static File run(File orkFile, File configFile, File outDir, boolean force, ProgressListener listener,
                             LeaderboardListener leaderboardListener) throws Exception {
+        return run(orkFile, GridAxis.load(configFile), outDir, force, listener, leaderboardListener);
+    }
+
+    public static File run(File orkFile, GridAxis.SweepConfig cfg, File outDir, boolean force, ProgressListener listener,
+                            LeaderboardListener leaderboardListener) throws Exception {
         File outFile = OutputNaming.uniqueFile(orkFile, outDir, "fullfactorial", "parquet");
-        GridAxis.SweepConfig cfg = GridAxis.load(configFile);
         long total = cfg.totalCombos();
         double estSecPerSim = 0.03;
         double estHoursSingleThread = total * estSecPerSim / 3600.0;

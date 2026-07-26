@@ -125,12 +125,65 @@ public class ArcSimGui extends JFrame {
         JTextField outDirField = new JTextField();
         JCheckBox forceBox = new JCheckBox("Force run even if over the safety cap");
 
+        AxisFields windAvgAxis = new AxisFields("windAvg", 0, 22, 45, 0.5);
+        AxisFields windStdDevAxis = new AxisFields("windStdDev", 0, 6, 7, 0.5);
+        AxisFields turbulenceAxis = new AxisFields("turbulencePct", 0, 60, 7, 1.0);
+        AxisFields windDirAxis = new AxisFields("windDir", 0, 350, 36, 5.0);
+        AxisFields tempAxis = new AxisFields("temp", -10, 40, 11, 1.0);
+        AxisFields pressureAxis = new AxisFields("pressure", 970, 1030, 7, 1.0);
+        AxisFields rodAngleAxis = new AxisFields("rodAngle", 0, 6, 3, 0.5);
+        AxisFields[] axes = {windAvgAxis, windStdDevAxis, turbulenceAxis, windDirAxis, tempAxis, pressureAxis, rodAngleAxis};
+
         FormBuilder form = new FormBuilder();
         form.addFileRow("Rocket (.ork) file:", orkField, true, "OpenRocket files (*.ork)", "ork");
+
+        FormBuilder axisForm = new FormBuilder();
+        axisForm.addAxisRow("Wind avg (m/s):", windAvgAxis.min, windAvgAxis.max, windAvgAxis.count);
+        axisForm.addAxisRow("Wind std dev (m/s):", windStdDevAxis.min, windStdDevAxis.max, windStdDevAxis.count);
+        axisForm.addAxisRow("Turbulence intensity (%):", turbulenceAxis.min, turbulenceAxis.max, turbulenceAxis.count);
+        axisForm.addAxisRow("Wind direction (deg):", windDirAxis.min, windDirAxis.max, windDirAxis.count);
+        axisForm.addAxisRow("Temperature (C):", tempAxis.min, tempAxis.max, tempAxis.count);
+        axisForm.addAxisRow("Pressure (mbar):", pressureAxis.min, pressureAxis.max, pressureAxis.count);
+        axisForm.addAxisRow("Launch rod angle (deg):", rodAngleAxis.min, rodAngleAxis.max, rodAngleAxis.count);
+
         JPanel configRow = form.addFileRow("Grid config (.properties):", configField, true, "Properties files (*.properties)", "properties");
-        JButton editConfigButton = new JButton("Edit config...");
-        editConfigButton.addActionListener(e -> editPropertiesFile(new File(configField.getText().trim())));
+        JButton loadRangesButton = new JButton("Load ranges from file");
+        JButton saveRangesButton = new JButton("Save ranges to file");
+        JButton editConfigButton = new JButton("Edit sites/safety cap...");
+        configRow.add(loadRangesButton);
+        configRow.add(saveRangesButton);
         configRow.add(editConfigButton);
+        editConfigButton.addActionListener(e -> editPropertiesFile(new File(configField.getText().trim())));
+
+        loadRangesButton.addActionListener(e -> {
+            File configFile = requireExistingFile(configField, "grid config .properties file");
+            if (configFile == null) return;
+            try {
+                GridAxis.SweepConfig cfg = GridAxis.load(configFile);
+                windAvgAxis.loadFrom(cfg.windAvg);
+                windStdDevAxis.loadFrom(cfg.windStdDev);
+                turbulenceAxis.loadFrom(cfg.turbulencePct);
+                windDirAxis.loadFrom(cfg.windDir);
+                tempAxis.loadFrom(cfg.temp);
+                pressureAxis.loadFrom(cfg.pressure);
+                rodAngleAxis.loadFrom(cfg.rodAngle);
+                appendLog("Loaded grid ranges from " + configFile.getName() + ".\n");
+            } catch (Exception ex) {
+                JOptionPane.showMessageDialog(this, "Could not load config: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+
+        saveRangesButton.addActionListener(e -> {
+            File configFile = new File(configField.getText().trim());
+            try {
+                saveAxisRangesToConfig(configFile, axes);
+                appendLog("Saved grid ranges to " + configFile.getName() + ".\n");
+            } catch (Exception ex) {
+                JOptionPane.showMessageDialog(this, "Could not save config: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+
+        form.addRow("", axisForm.panel());
         form.addDirRow("Output folder (blank = \"" + OutputNaming.FULL_FACTORIAL_FOLDER + "\" next to the rocket file):", outDirField);
         form.addRow("", hintLabel("Filename is generated automatically as " +
                 "&lt;rocketName&gt;_fullfactorial_&lt;timestamp&gt;.parquet -- never overwrites a previous run. " +
@@ -138,8 +191,10 @@ public class ArcSimGui extends JFrame {
                 "~1,048,576-row-per-sheet limit; open it in the Data Viewer tab, or pandas/DuckDB/Excel-with-a-plugin. " +
                 "A companion &lt;...&gt;_summary.csv (success rate + correlations) is written alongside it."));
         form.addRow("", forceBox);
-        form.addRow("", hintLabel("Sites for this engine are set inside the config file " +
-                "(comma-separated: MDRA_SOD_FARM, SPAAR_LANCASTER, or CUSTOM:lat|lon|alt) -- click Edit config to change them."));
+        form.addRow("", hintLabel("Sites, the safety cap, and thread count are set inside the config file " +
+                "(comma-separated: MDRA_SOD_FARM, SPAAR_LANCASTER, or CUSTOM:lat|lon|alt) -- click " +
+                "\"Edit sites/safety cap...\" to change them. The ranges above always take priority over the " +
+                "file's ranges when you run or preview."));
 
         LeaderboardPanel leaderboardPanel = new LeaderboardPanel(
                 "Most favorable conditions seen so far (live, closest to apogee/time target)", "Error score");
@@ -152,7 +207,7 @@ public class ArcSimGui extends JFrame {
             File configFile = requireExistingFile(configField, "grid config .properties file");
             if (configFile == null) return;
             runJob("Preview grid size", listener -> {
-                GridAxis.SweepConfig cfg = GridAxis.load(configFile);
+                GridAxis.SweepConfig cfg = buildSweepConfig(configFile, axes);
                 long total = cfg.totalCombos();
                 double estSec = total * 0.03;
                 System.out.printf("Grid total: %,d combinations%n", total);
@@ -175,7 +230,8 @@ public class ArcSimGui extends JFrame {
 
             leaderboardPanel.clear();
             runJob("Engine 1: Full Factorial Sweep", listener -> {
-                File out = FullFactorialSweep.run(ork, configFile, outDir, force, listener, leaderboardPanel::update);
+                GridAxis.SweepConfig cfg = buildSweepConfig(configFile, axes);
+                File out = FullFactorialSweep.run(ork, cfg, outDir, force, listener, leaderboardPanel::update);
                 if (out != null) openFileLocation(out);
             });
         });
@@ -184,6 +240,39 @@ public class ArcSimGui extends JFrame {
         panel.add(verticalSplit(form.panel(), leaderboardPanel, 0.35), BorderLayout.CENTER);
         panel.add(buttonRow(previewButton, runButton), BorderLayout.SOUTH);
         return withPadding(panel);
+    }
+
+    private static GridAxis.SweepConfig buildSweepConfig(File configFile, AxisFields[] axes) throws Exception {
+        GridAxis.SweepConfig cfg = GridAxis.load(configFile);
+        cfg.windAvg = axes[0].toGridAxis();
+        cfg.windStdDev = axes[1].toGridAxis();
+        cfg.turbulencePct = axes[2].toGridAxis();
+        cfg.windDir = axes[3].toGridAxis();
+        cfg.temp = axes[4].toGridAxis();
+        cfg.pressure = axes[5].toGridAxis();
+        cfg.rodAngle = axes[6].toGridAxis();
+        return cfg;
+    }
+
+    private static void saveAxisRangesToConfig(File configFile, AxisFields[] axes) throws Exception {
+        java.util.Properties p = new java.util.Properties();
+        if (configFile.exists()) {
+            try (java.io.FileInputStream in = new java.io.FileInputStream(configFile)) {
+                p.load(in);
+            }
+        }
+        for (AxisFields a : axes) {
+            GridAxis g = a.toGridAxis();
+            p.setProperty(a.propKey + ".min", String.valueOf(g.min));
+            p.setProperty(a.propKey + ".max", String.valueOf(g.max));
+            p.setProperty(a.propKey + ".step", String.valueOf(g.step));
+        }
+        p.setProperty("sites", p.getProperty("sites", "MDRA_SOD_FARM,SPAAR_LANCASTER"));
+        p.setProperty("maxCombosSafety", p.getProperty("maxCombosSafety", "50000000"));
+        p.setProperty("threads", p.getProperty("threads", String.valueOf(Runtime.getRuntime().availableProcessors())));
+        try (java.io.FileOutputStream out = new java.io.FileOutputStream(configFile)) {
+            p.store(out, "Full-factorial sweep grid for FullFactorialSweep (Engine 1).");
+        }
     }
 
     private JPanel buildDesignTab() {
@@ -1058,6 +1147,21 @@ public class ArcSimGui extends JFrame {
             return buttonsPanel;
         }
 
+        JPanel addAxisRow(String label, JSpinner minSpinner, JSpinner maxSpinner, JSpinner countSpinner) {
+            JPanel rowPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+            minSpinner.setPreferredSize(new Dimension(75, minSpinner.getPreferredSize().height));
+            maxSpinner.setPreferredSize(new Dimension(75, maxSpinner.getPreferredSize().height));
+            countSpinner.setPreferredSize(new Dimension(60, countSpinner.getPreferredSize().height));
+            rowPanel.add(minSpinner);
+            rowPanel.add(new JLabel("to"));
+            rowPanel.add(maxSpinner);
+            rowPanel.add(new JLabel("at"));
+            rowPanel.add(countSpinner);
+            rowPanel.add(new JLabel("steps"));
+            addRow(label, rowPanel);
+            return rowPanel;
+        }
+
         JPanel addFileRow(String label, JTextField field, boolean open, String filterDesc, String ext) {
             JPanel rowPanel = new JPanel(new BorderLayout(4, 0));
             rowPanel.add(field, BorderLayout.CENTER);
@@ -1087,6 +1191,28 @@ public class ArcSimGui extends JFrame {
             p.add(rowPanel, c);
             row++;
             return buttonsPanel;
+        }
+    }
+
+    private static final class AxisFields {
+        final String propKey;
+        final JSpinner min, max, count;
+
+        AxisFields(String propKey, double defMin, double defMax, int defCount, double spinnerStep) {
+            this.propKey = propKey;
+            this.min = new JSpinner(new SpinnerNumberModel(defMin, -100000.0, 100000.0, spinnerStep));
+            this.max = new JSpinner(new SpinnerNumberModel(defMax, -100000.0, 100000.0, spinnerStep));
+            this.count = new JSpinner(new SpinnerNumberModel(defCount, 1, 5000, 1));
+        }
+
+        GridAxis toGridAxis() {
+            return GridAxis.fromRangeAndCount((Double) min.getValue(), (Double) max.getValue(), (Integer) count.getValue());
+        }
+
+        void loadFrom(GridAxis axis) {
+            min.setValue(axis.min);
+            max.setValue(axis.max);
+            count.setValue(axis.count());
         }
     }
 

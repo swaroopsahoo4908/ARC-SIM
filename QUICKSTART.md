@@ -60,11 +60,14 @@ configure or get out of sync with where you actually keep the app.
 Arc-Sim opens with one tab per engine, plus a Data Viewer tab. Each engine tab has its own form,
 a *Run* button, a progress bar, and a live log at the bottom of the window.
 
-1. *Engine 1 -- Full Factorial Sweep*: point it at a `.ork` rocket file and a grid config file
-   (`sweep_grid.properties` is provided as a ready-to-use default) and it exhaustively tests every
-   combination of wind, temperature, pressure, and launch angle in that grid, producing a full
-   results table (`.parquet` + a `.csv` summary). Use the *Preview combination count & time
-   estimate* button first -- it tells you how long a run will take before you commit to it.
+1. *Engine 1 -- Full Factorial Sweep*: point it at a `.ork` rocket file and exhaustively tests
+   every combination of wind, temperature, pressure, and launch angle in a grid, producing a full
+   results table (`.parquet` + a `.csv` summary). Each swept parameter has its own row in the tab:
+   *range1* to *range2* at *step count*, editable right in the GUI -- no need to hand-edit a config
+   file. Sites, the safety cap, and thread count still live in `sweep_grid.properties` (click
+   "Edit sites/safety cap..."); "Load ranges from file" / "Save ranges to file" sync the on-screen
+   ranges with that file if you want to reuse a grid later. Use the *Preview combination count &
+   time estimate* button first -- it tells you how long a run will take before you commit to it.
 2. *Engine 2 -- Design Solver*: give it a target apogee and flight-time window plus one fixed set
    of conditions, and it solves for ballast weight, fin height, and parachute spill-hole size to
    hit those targets, saving a new `.ork` file with the solved design.
@@ -81,12 +84,12 @@ always in the filename), so re-running never overwrites a previous result.
 
 1. Open the *Engine 1* tab.
 2. Browse to your `.ork` rocket file.
-3. Leave the grid config field pointed at the bundled `sweep_grid.properties`, or browse to your
-   own.
+3. Adjust any of the seven range rows (wind avg, wind std dev, turbulence, wind direction, temp,
+   pressure, rod angle) if the defaults don't fit your case -- each is *min* to *max* at *step
+   count*.
 4. Click *Preview combination count & time estimate* and read the printed estimate in the log.
-5. If the estimate is longer than you want to wait, open `sweep_grid.properties` in any text
-   editor and widen the `.step` values (fewer, coarser steps = faster; see the comments inside
-   that file), then preview again.
+5. If the estimate is longer than you want to wait, lower a step count or narrow a range, then
+   preview again.
 6. Click *Run Full Factorial Sweep*. Watch progress in the log and the live leaderboard of
    best-matching conditions found so far.
 7. When it finishes, open the *Data Viewer* tab to browse the results, or open the output

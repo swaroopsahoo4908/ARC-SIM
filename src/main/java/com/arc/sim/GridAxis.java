@@ -23,6 +23,17 @@ public class GridAxis {
         return min + index * step;
     }
 
+    public static GridAxis fromRangeAndCount(double min, double max, int count) {
+        if (count <= 1) {
+            return new GridAxis(min, min, 1);
+        }
+        double step = (max - min) / (count - 1);
+        if (step <= 0) {
+            step = 1;
+        }
+        return new GridAxis(min, max, step);
+    }
+
     public static class SweepConfig {
         public GridAxis windAvg, windStdDev, turbulencePct, windDir, temp, pressure, rodAngle;
         public List<LaunchSite> sites;
