@@ -5,14 +5,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Minimal dependency-free JSON parser for decoding weather API responses (Engine 6) without
- * introducing an external JSON library dependency, consistent with this project's preference
- * for lightweight hand-rolled readers over third-party dependencies (see MiniParquet). Limited
- * to deserialization; does not support streaming, serialization, or schema validation. Parses a
- * complete document into nested Map/List/String/Double/Boolean/null structures navigable via
- * get().
- */
 public class MiniJson {
     private final String s;
     private int i;
@@ -22,14 +14,12 @@ public class MiniJson {
         this.i = 0;
     }
 
-    /** Parses a complete JSON document into nested Map&lt;String,Object&gt;/List&lt;Object&gt;/String/Double/Boolean/null. */
     public static Object parse(String json) {
         MiniJson p = new MiniJson(json);
         Object v = p.parseValue();
         return v;
     }
 
-    /** Resolves a chain of object keys (e.g. get(root, "current", "wind_kph")); returns null on any missing or non-object step. */
     @SuppressWarnings("unchecked")
     public static Object get(Object node, String... path) {
         Object cur = node;
@@ -56,7 +46,7 @@ public class MiniJson {
         if (c == '"') return parseString();
         if (c == 't' || c == 'f') return parseBoolean();
         if (c == 'n') {
-            i += 4; // "null"
+            i += 4;
             return null;
         }
         return parseNumber();
@@ -64,7 +54,7 @@ public class MiniJson {
 
     private Map<String, Object> parseObject() {
         Map<String, Object> map = new LinkedHashMap<>();
-        i++; // consume '{'
+        i++;
         skipWs();
         if (peek() == '}') {
             i++;
@@ -74,7 +64,7 @@ public class MiniJson {
             skipWs();
             String key = parseString();
             skipWs();
-            i++; // consume ':'
+            i++;
             Object val = parseValue();
             map.put(key, val);
             skipWs();
@@ -94,7 +84,7 @@ public class MiniJson {
 
     private List<Object> parseArray() {
         List<Object> list = new ArrayList<>();
-        i++; // consume '['
+        i++;
         skipWs();
         if (peek() == ']') {
             i++;
@@ -119,7 +109,7 @@ public class MiniJson {
 
     private String parseString() {
         skipWs();
-        i++; // consume opening quote
+        i++;
         StringBuilder sb = new StringBuilder();
         while (true) {
             char c = s.charAt(i++);
@@ -161,7 +151,7 @@ public class MiniJson {
             i += 4;
             return Boolean.TRUE;
         }
-        i += 5; // "false"
+        i += 5;
         return Boolean.FALSE;
     }
 
@@ -173,3 +163,4 @@ public class MiniJson {
         while (i < s.length() && Character.isWhitespace(s.charAt(i))) i++;
     }
 }
+

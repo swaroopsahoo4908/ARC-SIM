@@ -11,15 +11,6 @@ import java.io.File;
 import java.util.List;
 import java.util.Vector;
 
-/**
- * Built-in data viewer for the tabular output formats produced by this toolkit: .parquet (Engine 1
- * full-factorial output, read/written via the dependency-free MiniParquet), .csv (Engine 1's
- * companion summary), and .xlsx (Engine 4's local-conditions sweep output).
- *
- * Provides read-only preview in a sortable JTable; not a spreadsheet editor. A row cap (default
- * 20,000) bounds the data materialized into Swing table cells, preventing a multi-million-row
- * full-factorial parquet file from being loaded in its entirety.
- */
 public class DataViewerPanel extends JPanel {
 
     private static final int DEFAULT_ROW_CAP = 20_000;
@@ -30,7 +21,6 @@ public class DataViewerPanel extends JPanel {
     private final JSpinner rowCapSpinner = new JSpinner(new SpinnerNumberModel(DEFAULT_ROW_CAP, 100, 5_000_000, 1000));
     private final JTable table = new JTable();
 
-    // Cached workbook reference avoids re-reading the file from disk on each sheet switch.
     private Workbook openWorkbook;
     private File openFile;
 
@@ -136,10 +126,8 @@ public class DataViewerPanel extends JPanel {
         }
     }
 
-    // ---------------------------------------------------------------- xlsx
-
     private void openXlsx(File f) throws Exception {
-        openWorkbook = WorkbookFactory.create(f, null, true); // read-only
+        openWorkbook = WorkbookFactory.create(f, null, true);
         openFile = f;
         sheetCombo.removeAllItems();
         for (int i = 0; i < openWorkbook.getNumberOfSheets(); i++) {
@@ -195,8 +183,6 @@ public class DataViewerPanel extends JPanel {
         }
     }
 
-    // ---------------------------------------------------------------- csv
-
     private void openCsv(File f) throws Exception {
         CsvUtil.Table t = CsvUtil.read(f);
         int rowCap = (Integer) rowCapSpinner.getValue();
@@ -216,8 +202,6 @@ public class DataViewerPanel extends JPanel {
         infoLabel.setText(String.format("CSV: showing %,d of %,d row(s)%s", shown, t.rows.size(),
                 shown < t.rows.size() ? " (raise the row cap to see more)" : ""));
     }
-
-    // ---------------------------------------------------------------- parquet
 
     private void openParquet(File f) throws Exception {
         int rowCap = (Integer) rowCapSpinner.getValue();
@@ -246,3 +230,4 @@ public class DataViewerPanel extends JPanel {
         infoLabel.setText(message);
     }
 }
+

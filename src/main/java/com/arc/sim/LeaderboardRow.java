@@ -1,11 +1,5 @@
 package com.arc.sim;
 
-/**
- * Single ranked entry in a live top-N leaderboard, representing either closest-simulation-to-target
- * (Engine 3) or most-favorable-conditions (Engine 1 / Engine 2) results. Score is a normalized
- * composite error relative to the run's target(s); lower values indicate a closer match regardless
- * of originating engine, permitting a uniform table/column layout across all three engines.
- */
 public class LeaderboardRow {
     public final int rank;
     public final double score;
@@ -21,3 +15,4 @@ public class LeaderboardRow {
         this.detail = detail;
     }
 }
+

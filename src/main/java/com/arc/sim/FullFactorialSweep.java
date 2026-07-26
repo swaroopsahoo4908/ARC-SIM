@@ -10,50 +10,14 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
-/**
- * Engine 1: FullFactorialSweep.
- *
- * Component specification:
- * - Purpose: Exhaustive evaluation of every combination in the grid defined by
- *   sweep_grid.properties, without sampling or skipping. Holds the rocket design exactly as
- *   uploaded, with no ballast/fin/hole modification. Applicable when exhaustive coverage is required
- *   in place of a statistical sample, subject to selecting increments that keep the total
- *   combination count computationally tractable.
- * - Swept variables: wind speed average and standard deviation, turbulence intensity, wind
- *   direction, temperature, pressure, launch rod/rail tilt angle (rod direction itself is not
- *   swept independently -- the rod is always pointed into the wind, per SimRunner -- since it is
- *   the wind-relative tilt, not the absolute compass heading, that affects the trajectory), and
- *   launch site.
- * - Scale considerations: At fine-grained increments (0.5 m/s wind, 0.1 m/s standard deviation,
- *   1% turbulence, 0.5 deg direction, 1 deg C, 1 mbar) the grid comprises approximately 388
- *   billion points, corresponding to roughly 369 years on a single CPU core or approximately 23
- *   years across 16 cores. This scale is not tractable without coarsening the increments via
- *   sweep_grid.properties. The bundled default configuration in that file comprises approximately
- *   37 million combinations -- wider ranges and finer resolution than earlier defaults, while
- *   remaining tractable (on the order of a day and a half on an 8-thread machine at the nominal
- *   ~30ms/sim estimate; faster on more cores). Adjust increments against the printed runtime
- *   estimate prior to committing to a run.
- * - Output format: Parquet, not xlsx. A full-factorial run routinely produces tens of millions of
- *   rows, exceeding Excel's approximately 1,048,576-rows-per-sheet limit that the prior xlsx
- *   writer required multi-sheet chunking to accommodate. Each row (one per simulated combination)
- *   is written to a single "<orkName>_fullfactorial_<timestamp>.parquet" file via MiniParquet
- *   (this project's dependency-free Parquet writer; see MiniParquet.java), streamed in
- *   bounded-size row groups so memory usage remains constant regardless of combination count.
- *   Output may be opened in this toolkit's Data Viewer tab, or in pandas, DuckDB, or any
- *   Parquet-aware tool. The success-rate and correlation summary (previously an xlsx "Summary"
- *   sheet) is written alongside it as a companion "<...>_summary.csv" file.
- * - Safety: Execution is refused if totalCombos() exceeds maxCombosSafety in the configuration,
- *   unless --force is specified, preventing a configuration error from inadvertently launching a
- *   multi-year job.
- */
 public class FullFactorialSweep {
 
-    private static final double TARGET_APOGEE_M = 243.84; // 800 ft
+    private static final double TARGET_APOGEE_M = 243.84;
     private static final double APOGEE_TOLERANCE_M = 0.25;
-    private static final double TARGET_TIME_CENTER_S = 38.5; // Midpoint of the 37.5-39.5s window
-    private static final double TIME_TOLERANCE_S = 1.0; // Half-width of the 37.5-39.5s window
+    private static final double TARGET_TIME_CENTER_S = 38.5;
+    private static final double TIME_TOLERANCE_S = 1.0;
     private static final long QUEUE_CAPACITY = 50_000;
-    private static final int ROWS_PER_ROW_GROUP = 200_000; // Bounds MiniParquet's in-memory buffer per flush
+    private static final int ROWS_PER_ROW_GROUP = 200_000;
 
     public static void main(String[] args) {
         if (args.length < 2) {
@@ -79,35 +43,20 @@ public class FullFactorialSweep {
         }
     }
 
-    /** Backward-compatible overload; no progress reporting. outDir may be null (defaults to the ork file's own directory). */
     public static File run(File orkFile, File configFile, File outDir, boolean force) throws Exception {
         return run(orkFile, configFile, outDir, force, ProgressListener.NONE);
     }
 
-    /** Backward-compatible overload; no live leaderboard updates. */
     public static File run(File orkFile, File configFile, File outDir, boolean force, ProgressListener listener) throws Exception {
         return run(orkFile, configFile, outDir, force, listener, LeaderboardListener.NONE);
     }
 
-    /**
-     * Programmatic entry point (does not invoke System.exit); suitable for invocation from the
-     * GUI or other Java code. outDir specifies the destination directory (may be null to default
-     * to the ork file's own directory); the output filename is auto-generated via OutputNaming
-     * as "<orkName>_fullfactorial_<timestamp>.parquet", ensuring repeated runs do not overwrite
-     * prior output. Returns the .parquet file written; the companion "_summary.csv" is written
-     * alongside it under the same base name.
-     *
-     * leaderboardListener receives incremental top-10 updates representing the most favorable
-     * conditions observed to date. Updates are issued from the
-     * single consumer thread that drains the worker queue, so no synchronization beyond
-     * TopNLeaderboard's own is required.
-     */
     public static File run(File orkFile, File configFile, File outDir, boolean force, ProgressListener listener,
                             LeaderboardListener leaderboardListener) throws Exception {
         File outFile = OutputNaming.uniqueFile(orkFile, outDir, "fullfactorial", "parquet");
         GridAxis.SweepConfig cfg = GridAxis.load(configFile);
         long total = cfg.totalCombos();
-        double estSecPerSim = 0.03; // Nominal estimate; recalibrate after timing representative runs on target hardware
+        double estSecPerSim = 0.03;
         double estHoursSingleThread = total * estSecPerSim / 3600.0;
         double estHoursParallel = estHoursSingleThread / cfg.threads;
 
@@ -145,7 +94,7 @@ public class FullFactorialSweep {
             if (startIdx >= endIdx) continue;
             futures.add(pool.submit(() -> {
                 try {
-                    SimRunner runner = new SimRunner(orkFile); // Independent document instance per worker thread
+                    SimRunner runner = new SimRunner(orkFile);
                     for (long i = startIdx; i < endIdx; i++) {
                         if (Thread.currentThread().isInterrupted()) break;
                         double[] vals = decode(i, counts, cfg);
@@ -196,9 +145,6 @@ public class FullFactorialSweep {
 
         try (MiniParquet.Writer writer = new MiniParquet.Writer(outFile, columns, ROWS_PER_ROW_GROUP)) {
 
-            // Fixed all-zero baseline row (zero wind, standard deviation, turbulence, and
-            // direction; standard-temperature-and-pressure atmosphere; actual site latitude,
-            // longitude, and altitude), consistent with the reference row written by Engine 1.
             LaunchSite baselineSite = cfg.sites.get(0);
             SimRunner baselineRunner = new SimRunner(orkFile);
             EnvironmentPoint stpEnv = EnvironmentPoint.stpBaseline(baselineSite);
@@ -255,8 +201,7 @@ public class FullFactorialSweep {
                 try {
                     f.get();
                 } catch (Exception ignored) {
-                    // Worker interruption or cancellation is non-fatal; results processed prior to
-                    // interruption are retained in the output.
+
                 }
             }
             pool.shutdown();
@@ -285,10 +230,6 @@ public class FullFactorialSweep {
         });
     }
 
-    /**
-     * Decodes a linear combination index into
-     * [windAvg, windStdDev, turbulencePct, windDir, temp, pressure, rodAngle, siteIdx].
-     */
     private static double[] decode(long index, long[] counts, GridAxis.SweepConfig cfg) {
         long i = index;
         long siteIdx = i % counts[7]; i /= counts[7];
@@ -341,3 +282,4 @@ public class FullFactorialSweep {
         }
     }
 }
+

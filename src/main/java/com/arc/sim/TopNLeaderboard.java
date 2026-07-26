@@ -4,26 +4,15 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-/**
- * Maintains the best N (lowest-score) results observed during a run, re-ranked on every insertion.
- * Used by Engine 1/Engine 2 to track most-favorable-conditions results and by Engine 3 to track
- * closest-simulation results; all three cases reduce to the same problem: score is a normalized
- * composite error against the engine's target(s), with lower values ranked higher.
- *
- * Thread-safe: FullFactorialSweep may invoke offer() concurrently from worker
- * threads. Callers should retrieve a snapshot() after offer() returns true to propagate a live
- * update to the GUI.
- */
 public class TopNLeaderboard {
     private final int capacity;
-    private final List<double[]> scored = new ArrayList<>(); // [score, apogeeM, flightTimeS], index-paired with details
+    private final List<double[]> scored = new ArrayList<>();
     private final List<String> details = new ArrayList<>();
 
     public TopNLeaderboard(int capacity) {
         this.capacity = Math.max(1, capacity);
     }
 
-    /** Returns true if this result was admitted to the leaderboard (i.e., the table state changed). */
     public synchronized boolean offer(double score, double apogeeM, double flightTimeS, String detail) {
         if (Double.isNaN(score) || Double.isInfinite(score)) return false;
         if (scored.size() < capacity) {
@@ -69,3 +58,4 @@ public class TopNLeaderboard {
         return scored.isEmpty();
     }
 }
+

@@ -7,55 +7,16 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Engine 4: WeatherDrivenDesign.
- *
- * Component specification:
- * - Purpose: Retrieves a live current weather reading (WeatherClient) and executes the following
- *   pipeline:
- *   1. Engine 2 (DesignSolver) -- solves ballast mass, fin height, and hole radius against the
- *      single retrieved atmosphere, functionally equivalent to running Engine 2 with manually
- *      entered values, except the input values originate from a live API query rather than an
- *      estimate.
- *   2. Engine 3 (MeshExporter) -- exports complete STL/OBJ CAD geometry of the solved design.
- *   3. LocalConditionsSweep -- evaluates the solved (fixed) design across a narrow,
- *      locally-realistic envelope centered on the retrieved conditions (as distinct from Engine
- *      1's wide worst-case envelope), quantifying the sensitivity of the result to same-day
- *      condition variability.
- *   4. Margin fin sets -- re-solves fin height only (ballast and hole radius remain fixed at
- *      their step-1 solved values) at four wind-speed variants: center wind -1.0 sigma, -0.5
- *      sigma, +0.5 sigma, +1.0 sigma (sigma being the wind standard deviation used in step 1),
- *      exporting each as a standalone fin-set-only STL/OBJ. These represent physical spare fin
- *      sets suitable for substitution if actual launch-day wind speed deviates from the forecast
- *      center value.
- *
- * The main solve does not duplicate DesignSolver's bisection logic; it invokes DesignSolver.run()
- * directly and consumes the returned Result. The margin-fin re-solve is a simpler single-variable
- * bisection (ballast and hole radius are not modified, remaining at their step-1 solved values on
- * the rocket's actual components) and is therefore implemented locally rather than reusing
- * DesignSolver's three-variable-coupled private bisection methods.
- */
 public class WeatherDrivenDesign {
 
     private static final int FIN_BISECTION_ITERS = 30;
-    private static final double APOGEE_TOLERANCE_M = 0.1; // Tightened from 0.25; matches DesignSolver's tolerance
-    // Standard margin points: +/-0.5 sigma and +/-1.0 sigma wind speed around the solved (center)
-    // condition, holding all other parameters (standard deviation, turbulence, direction,
-    // temperature, pressure) fixed at the retrieved reading.
+    private static final double APOGEE_TOLERANCE_M = 0.1;
+
     private static final double[] MARGIN_SIGMA_MULTIPLIERS = {-1.0, -0.5, 0.5, 1.0};
 
-    // Automatic search-bound widening.
-    // A bisection or pattern search that terminates with a control variable pinned at its own
-    // bound, with the target still unmet, has not failed to converge -- it has converged to the
-    // edge of a search space that was undersized for the given atmosphere. DesignSolver reports
-    // this condition ("at a bound means you need wider bounds") but requires manual intervention
-    // to re-run with adjusted bounds. Engine 4 instead detects this condition and re-solves
-    // automatically with an expanded search space, applied both to the main solve and to each
-    // individual margin-fin re-solve (a margin wind speed may require greater fin height, ballast,
-    // or hole radius range than the center condition did).
     private static final int MAX_AUTO_WIDEN_ATTEMPTS = 3;
-    private static final double BOUND_WIDEN_FACTOR = 2.0;      // Each attempt doubles the saturated maximum bound(s)
-    private static final double BOUND_SATURATION_EPS_FRACTION = 0.01; // "At a bound" is defined as within 1% of the range
+    private static final double BOUND_WIDEN_FACTOR = 2.0;
+    private static final double BOUND_SATURATION_EPS_FRACTION = 0.01;
 
     public static class MarginFin {
         public final double windSpeedMs;
@@ -74,25 +35,16 @@ public class WeatherDrivenDesign {
     }
 
     public static class Result {
-        public File runDir; // Per-run subfolder into which all output below was written
+        public File runDir;
         public DesignSolver.Result mainSolve;
-        public DesignSolver.Bounds effectiveBounds; // Bounds (possibly auto-widened) with which the main solve actually converged
-        public int mainSolveWidenAttempts; // 0 if the original bounds were sufficient
+        public DesignSolver.Bounds effectiveBounds;
+        public int mainSolveWidenAttempts;
         public File mainCadStl;
         public File mainCadObj;
         public File localSweepXlsx;
         public final List<MarginFin> marginFins = new ArrayList<>();
     }
 
-    /**
-     * Core entry point. `runner` must already be loaded (typically via the GUI's "Inspect Rocket"
-     * flow, consistent with Engine 2) so that selection.finSet/ballastComponents/parachute (if
-     * provided) reference actual component instances on this document.
-     *
-     * mainLeaderboardListener mirrors Engine 2's live closest-simulation-to-target leaderboard;
-     * localSweepLeaderboardListener mirrors Engine 1's live most-favorable-conditions leaderboard,
-     * applied to step 3's local envelope sweep.
-     */
     public static Result run(SimRunner runner, File orkFile, WeatherClient.Reading weather,
                               double windStdDevMs, double turbulencePct,
                               double targetApogeeM, double targetTimeMinS, double targetTimeMaxS,
@@ -103,10 +55,6 @@ public class WeatherDrivenDesign {
         if (bounds == null) bounds = DesignSolver.Bounds.defaults();
         double targetTimeCenterS = (targetTimeMinS + targetTimeMaxS) / 2.0;
 
-        // Each run is assigned its own "<rocketName>_weatherdesign_<timestamp>/" subfolder
-        // (consistent with the per-run subfolder pattern used by Engine 3's geometry export)
-        // within the resolved output folder, ensuring repeated Engine 4 runs on the same
-        // rocket never intermix one run's solved .ork/CAD/sweep/margin-fin files with another's.
         File runDir = OutputNaming.uniqueDir(orkFile, outDir, "weatherdesign");
 
         System.out.println("=== ENGINE 4: Weather-Driven Design ===");
@@ -116,14 +64,10 @@ public class WeatherDrivenDesign {
                 weather.locationName, weather.formattedFetchTime(), weather.windAvgMs, weather.windGustMs,
                 windStdDevMs, weather.windDirDeg, weather.tempC, weather.pressureMbar, weather.conditionText);
 
-        // 1) Main solve at the retrieved/fixed atmosphere (Engine 2).
         DesignSolver.Result mainSolve = DesignSolver.run(runner, orkFile, targetApogeeM, targetTimeMinS, targetTimeMaxS,
                 site, weather.windAvgMs, windStdDevMs, turbulencePct, weather.windDirDeg, weather.tempC, weather.pressureMbar,
                 selection, bounds, runDir, listener, mainLeaderboardListener);
 
-        // Auto-widen and re-solve if the solve terminated with a control variable at a bound
-        // without meeting both targets; see the class-level specification regarding
-        // MAX_AUTO_WIDEN_ATTEMPTS above.
         int mainWidenAttempts = 0;
         while (mainSolve != null && !Thread.currentThread().isInterrupted()
                 && (!mainSolve.apogeeOk || !mainSolve.timeOk)
@@ -162,12 +106,9 @@ public class WeatherDrivenDesign {
 
         Rocket rocket = runner.getDocument().getRocket();
         TrapezoidFinSet finSet = (selection != null && selection.finSet != null) ? selection.finSet : RocketComponents.findFinSet(rocket);
-        // fixedSweepM is read back from the solved document (DesignSolver always restores it to
-        // the original file's value prior to saving) rather than independently re-derived,
-        // eliminating any possibility of drift.
+
         double fixedSweepM = mainSolve.fixedSweepM;
 
-        // 2) Export full CAD of the solved design (Engine 3).
         if (Thread.currentThread().isInterrupted()) return result;
         RocketGeometryExtractor.Geometry mainGeo = RocketGeometryExtractor.extract(rocket);
         List<MeshExporter.Triangle> mainMesh = MeshExporter.buildMesh(mainGeo);
@@ -177,7 +118,6 @@ public class WeatherDrivenDesign {
         MeshExporter.writeObj(mainMesh, result.mainCadObj, orkFile.getName());
         System.out.println("Exported main design CAD: " + result.mainCadStl.getName() + " / " + result.mainCadObj.getName());
 
-        // 3) Local realistic-envelope sweep of the solved (fixed) design.
         if (Thread.currentThread().isInterrupted()) return result;
         result.localSweepXlsx = LocalConditionsSweep.run(runner, site,
                 weather.windAvgMs, windStdDevMs, turbulencePct, weather.windDirDeg, weather.tempC, weather.pressureMbar,
@@ -186,7 +126,6 @@ public class WeatherDrivenDesign {
             System.out.println("Wrote local-conditions sweep: " + result.localSweepXlsx.getName());
         }
 
-        // 4) Margin fin sets at +/-0.5 sigma and +/-1.0 sigma wind speed.
         for (double mult : MARGIN_SIGMA_MULTIPLIERS) {
             if (Thread.currentThread().isInterrupted()) break;
             double marginWindMs = Math.max(0.0, weather.windAvgMs + mult * windStdDevMs);
@@ -200,11 +139,6 @@ public class WeatherDrivenDesign {
             finSet.setSweep(fixedSweepM);
             SimRunner.FlightResult r = runner.run(marginEnv);
 
-            // A margin wind speed may require greater fin height range than the center condition
-            // did (e.g., the +1 sigma gust may require larger fins than any value the main solve
-            // evaluated). If this margin point is pinned at the fin-height bound and apogee is
-            // still unmet, that bound alone is widened and re-solved, using the same
-            // auto-widening logic as the main solve above.
             int marginWidenAttempts = 0;
             while (r.ok && Math.abs(r.apogeeM - targetApogeeM) > APOGEE_TOLERANCE_M
                     && isAtBound(solvedFinHeightM, finLo, finHi)
@@ -240,10 +174,6 @@ public class WeatherDrivenDesign {
             result.marginFins.add(new MarginFin(marginWindMs, solvedFinHeightM, r, finStl, finObj));
         }
 
-        // Restore the main solved fin height. The margin loop above mutated the rocket's fin set
-        // on every pass; the in-memory document (and any subsequent Data Viewer/preview) must not
-        // be left reflecting whichever margin variant ran last. The already-saved solved .ork
-        // file (written by DesignSolver.run in step 1) is unaffected regardless.
         finSet.setHeight(mainSolve.finHeightM);
         finSet.setSweep(fixedSweepM);
         runner.run(new EnvironmentPoint(weather.windAvgMs, windStdDevMs, turbulencePct / 100.0,
@@ -253,14 +183,6 @@ public class WeatherDrivenDesign {
         return result;
     }
 
-    /**
-     * Bisection solve on fin height only, targeting apogee under the given environment. Ballast
-     * and hole radius are not modified: the caller has already set them to the main-solved values
-     * on the actual rocket components, and this method never references a BallastControl or
-     * ParachuteHoleControl, eliminating the risk of re-deriving an incorrect base value from an
-     * already-modified component, as could occur if a fresh control object were constructed
-     * post-solve.
-     */
     private static double solveFinHeightOnly(SimRunner runner, TrapezoidFinSet finSet, double fixedSweepM,
                                               EnvironmentPoint env, double targetApogeeM, double initialGuessM,
                                               double loM, double hiM) {
@@ -278,15 +200,14 @@ public class WeatherDrivenDesign {
             }
             if (Math.abs(r.apogeeM - targetApogeeM) <= APOGEE_TOLERANCE_M) break;
             if (r.apogeeM > targetApogeeM) {
-                lo = mid; // Apogee exceeds target; increased drag required, so increase fin height
+                lo = mid;
             } else {
-                hi = mid; // Apogee below target; reduced drag required, so decrease fin height
+                hi = mid;
             }
         }
         return mid;
     }
 
-    /** Returns true if the value lies within 1% of the range from either lo or hi, indicating the search bound has been reached. */
     private static boolean isAtBound(double value, double lo, double hi) {
         double eps = Math.max(1e-9, (hi - lo) * BOUND_SATURATION_EPS_FRACTION);
         return value <= lo + eps || value >= hi - eps;
@@ -298,12 +219,6 @@ public class WeatherDrivenDesign {
                 || isAtBound(r.holeRadiusM, b.minHoleRadiusM, b.maxHoleRadiusM);
     }
 
-    /**
-     * Doubles the upper bound of each range. Lower bounds represent physical floors (zero
-     * ballast, a structurally sound minimum fin height, zero hole radius) and are never the side
-     * that saturates in practice, so they are left unmodified. Returns a new Bounds instance; the
-     * instance passed in is never mutated.
-     */
     private static DesignSolver.Bounds widenBounds(DesignSolver.Bounds src) {
         DesignSolver.Bounds b = new DesignSolver.Bounds();
         b.minBallastKg = src.minBallastKg;
@@ -316,3 +231,4 @@ public class WeatherDrivenDesign {
         return b;
     }
 }
+

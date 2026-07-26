@@ -1,6 +1,5 @@
 package com.arc.sim;
 
-/** Tracks elapsed time against items processed to compute a live estimated-time-remaining value. */
 public class EtaTracker {
     private final long startMillis = System.currentTimeMillis();
     private final long total;
@@ -9,11 +8,10 @@ public class EtaTracker {
         this.total = total;
     }
 
-    /** Returns estimated seconds remaining, derived from measured throughput. Returns NaN prior to availability of sufficient data. */
     public double etaSeconds(long processed) {
         if (processed <= 0) return Double.NaN;
         double elapsedSec = (System.currentTimeMillis() - startMillis) / 1000.0;
-        double rate = processed / elapsedSec; // items/sec
+        double rate = processed / elapsedSec;
         if (rate <= 0) return Double.NaN;
         return (total - processed) / rate;
     }
@@ -29,3 +27,4 @@ public class EtaTracker {
         return String.format("%ds", sec);
     }
 }
+

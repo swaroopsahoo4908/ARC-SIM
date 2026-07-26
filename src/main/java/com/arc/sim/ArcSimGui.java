@@ -23,24 +23,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
-/**
- * Desktop GUI for the four arc-sim engines and the built-in data viewer. Provides
- * FullFactorialSweep, DesignSolver, MeshExporter, and WeatherDrivenDesign access via forms, file
- * pickers, a live log, and a progress bar, in place of positional CLI arguments. The Data Viewer
- * tab (DataViewerPanel) is a read-only browser for the toolkit's tabular output formats: .parquet
- * (Engine 1's full-factorial output, via the dependency-free MiniParquet reader), .csv (Engine 1's
- * companion summary), and .xlsx (Engine 4's local-conditions sweep, via LocalConditionsSweep).
- *
- * Engines 1, 2, and 4 each display one or two live top-10 leaderboards (LeaderboardPanel) during
- * execution: "most favorable conditions seen so far" for the sweep engines, "closest simulation to
- * target seen so far" for the design solver, updated in place as each new result displaces an
- * existing table entry.
- *
- * Jobs execute serially on a single background worker thread to prevent concurrent access to the
- * OpenRocket core by multiple engines. Cancel interrupts the running job; all long-running engines
- * (FullFactorialSweep, DesignSolver, WeatherDrivenDesign) check for interruption periodically and
- * terminate cleanly, retaining any partial results accumulated up to that point.
- */
 public class ArcSimGui extends JFrame {
 
     private final JTextArea log = new JTextArea();
@@ -54,32 +36,22 @@ public class ArcSimGui extends JFrame {
         return t;
     });
     private volatile Future<?> currentJob;
-    // weatherapi.com key -- used both for Engine 4's weather pull and (as of DeviceLocation) the
-    // "Use Current Location" IP-geolocation fallback, so both features are backed by the same
-    // provider/account rather than two independent geolocation services with differing accuracy.
-    // Per-user, not compiled in: read from AppConfig (a dotfile stored next to the app itself --
-    // see AppConfig.appDir() -- so the whole distribution stays self-contained), set via the
-    // first-run wizard or File > Preferences, since a key baked into the jar would be shared by
-    // every user this toolkit is distributed to.
+
     private static String weatherApiKey() {
         return AppConfig.get().weatherApiKey;
     }
-    // Default Browse-dialog directory: always starts at the app's own folder (wherever
-    // ArcSim.jar/ArcSim.command was opened from -- see AppConfig.appDir()) each launch, then
-    // tracks whatever folder is browsed to for the rest of the session (updated by addDirRow/
-    // addFileRow below), rather than a separately configured preference that could drift out of
-    // sync with where the app actually lives.
+
     private static File lastDir = AppConfig.appDir();
 
     public static final String APP_VERSION = "1.1.0";
 
     public ArcSimGui() {
-        super("Arc-Sim -- Skylight Rocketry Rocket Simulation Toolkit");
+        super("Arc-Sim -- Rocket Simulation Toolkit");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        setSize(960, 780);          // Fallback size for window managers that ignore MAXIMIZED_BOTH.
+        setSize(960, 780);
         setMinimumSize(new java.awt.Dimension(800, 600));
         setLocationRelativeTo(null);
-        setExtendedState(getExtendedState() | JFrame.MAXIMIZED_BOTH); // Maximize on open.
+        setExtendedState(getExtendedState() | JFrame.MAXIMIZED_BOTH);
 
         Image appIcon = loadAppIcon();
         if (appIcon != null) setIconImage(appIcon);
@@ -146,8 +118,6 @@ public class ArcSimGui extends JFrame {
 
         appendLog("ARC Rocket Simulation Toolkit ready. Pick a tab, fill in the form, and click Run.\n");
     }
-
-    // ---------------------------------------------------------------- Engine 1: Full factorial
 
     private JPanel buildFullSweepTab() {
         JTextField orkField = new JTextField();
@@ -216,8 +186,6 @@ public class ArcSimGui extends JFrame {
         return withPadding(panel);
     }
 
-    // ---------------------------------------------------------------- Engine 2: Design solver
-
     private JPanel buildDesignTab() {
         JTextField orkField = new JTextField();
         JButton inspectButton = new JButton("Inspect Rocket");
@@ -234,12 +202,12 @@ public class ArcSimGui extends JFrame {
         previewPanel.setBorder(BorderFactory.createTitledBorder("Rocket preview (approximate schematic, not to-scale CAD)"));
 
         SiteSelector siteSelector = new SiteSelector();
-        JSpinner targetApogee = new JSpinner(new SpinnerNumberModel(243.84, 0.0, 100000.0, 1.0)); // Default: 800 ft.
+        JSpinner targetApogee = new JSpinner(new SpinnerNumberModel(243.84, 0.0, 100000.0, 1.0));
         JSpinner targetTimeMin = new JSpinner(new SpinnerNumberModel(37.5, 0.0, 600.0, 0.5));
         JSpinner targetTimeMax = new JSpinner(new SpinnerNumberModel(39.5, 0.0, 600.0, 0.5));
         JSpinner windAvg = new JSpinner(new SpinnerNumberModel(3.8, 0.0, 20.0, 0.1));
         JSpinner windStdDev = new JSpinner(new SpinnerNumberModel(0.6, 0.0, 5.0, 0.1));
-        JSpinner turbulencePct = new JSpinner(new SpinnerNumberModel(13.4, 0.0, 50.0, 0.5));
+        JSpinner turbulencePct = new JSpinner(new SpinnerNumberModel(17.0, 0.0, 50.0, 0.5));
         JSpinner windDir = new JSpinner(new SpinnerNumberModel(270.0, 0.0, 360.0, 0.5));
         JSpinner tempC = new JSpinner(new SpinnerNumberModel(7.06, -50.0, 60.0, 0.5));
         JSpinner pressureMbar = new JSpinner(new SpinnerNumberModel(999.76, 800.0, 1100.0, 0.5));
@@ -256,8 +224,6 @@ public class ArcSimGui extends JFrame {
             maxFinHeightM.setValue(big.maxFinHeightM);
         });
 
-        // Holds the SimRunner created by "Inspect Rocket" so Run operates on the same loaded
-        // document, and therefore the same component object instances referenced by the combo boxes.
         final SimRunner[] inspectedRunner = new SimRunner[1];
 
         inspectButton.addActionListener(e -> {
@@ -356,7 +322,7 @@ public class ArcSimGui extends JFrame {
             DesignSolver.Bounds bounds = new DesignSolver.Bounds();
             bounds.maxBallastKg = (Double) maxBallastKg.getValue();
             bounds.maxFinHeightM = (Double) maxFinHeightM.getValue();
-            bounds.maxHoleRadiusM = (Double) maxHoleRadiusIn.getValue() * 0.0254; // Convert inches to meters.
+            bounds.maxHoleRadiusM = (Double) maxHoleRadiusIn.getValue() * 0.0254;
             bounds.maxOuterIters = (Integer) maxSolverPasses.getValue();
 
             SimRunner runner = inspectedRunner[0];
@@ -394,8 +360,6 @@ public class ArcSimGui extends JFrame {
         panel.add(buttonRow(runButton), BorderLayout.SOUTH);
         return withPadding(panel);
     }
-
-    // ---------------------------------------------------------------- Engine 3: Geometry export
 
     private JPanel buildGeometryExportTab() {
         JTextField orkField = new JTextField();
@@ -462,10 +426,7 @@ public class ArcSimGui extends JFrame {
             boolean doStl = stlBox.isSelected(), doObj = objBox.isSelected();
 
             runJob("Engine 3: Geometry Export", listener -> {
-                // Each run is written to its own "<rocketName>_geometry_<timestamp>/" subfolder
-                // (the same per-run subfolder pattern used by Engine 4's weather-driven design),
-                // ensuring re-exporting the same rocket never overwrites a previous run and all files from
-                // a given run (STL + OBJ) remain grouped together in the output folder.
+
                 File runDir = OutputNaming.uniqueDir(ork, outDir, "geometry");
                 String base = OutputNaming.baseName(ork);
                 List<MeshExporter.Triangle> tris = MeshExporter.buildMesh(geo);
@@ -496,8 +457,6 @@ public class ArcSimGui extends JFrame {
         return withPadding(panel);
     }
 
-    // ---------------------------------------------------------------- Engine 4: Weather-driven design
-
     private JPanel buildWeatherTab() {
         WeatherClient weatherClient = new WeatherClient(weatherApiKey());
         SiteSelector weatherSiteSelector = new SiteSelector();
@@ -507,12 +466,10 @@ public class ArcSimGui extends JFrame {
         JSpinner windAvgSpinner = new JSpinner(new SpinnerNumberModel(0.0, 0.0, 100.0, 0.1));
         JSpinner windGustSpinner = new JSpinner(new SpinnerNumberModel(0.0, 0.0, 150.0, 0.1));
         JSpinner windStdDevSpinner = new JSpinner(new SpinnerNumberModel(0.5, 0.0, 20.0, 0.1));
-        JSpinner turbulencePctSpinner = new JSpinner(new SpinnerNumberModel(10.0, 0.0, 50.0, 0.5));
+        JSpinner turbulencePctSpinner = new JSpinner(new SpinnerNumberModel(17.0, 0.0, 50.0, 0.5));
         JSpinner windDirSpinner = new JSpinner(new SpinnerNumberModel(0.0, 0.0, 360.0, 0.5));
         JSpinner tempSpinner = new JSpinner(new SpinnerNumberModel(15.0, -50.0, 60.0, 0.5));
         JSpinner pressureSpinner = new JSpinner(new SpinnerNumberModel(1013.25, 800.0, 1100.0, 0.5));
-        // Every weather field, including wind average/gust, is pre-filled from the API but
-        // remains editable, permitting override with higher-fidelity local data before a run.
 
         JButton fetchButton = new JButton("Fetch Weather Now");
 
@@ -560,9 +517,7 @@ public class ArcSimGui extends JFrame {
             t.start();
         };
         fetchButton.addActionListener(e -> doFetch[0].run());
-        // Triggers an initial fetch when this tab is built (engine start). Subsequent Fetch/Run
-        // actions reuse WeatherClient's hourly cache/cooldown, bounding network calls to at most
-        // once per hour regardless of tab or Run button usage.
+
         SwingUtilities.invokeLater(() -> doFetch[0].run());
 
         FormBuilder weatherForm = new FormBuilder();
@@ -578,7 +533,7 @@ public class ArcSimGui extends JFrame {
         weatherForm.addRow("Pressure (mbar, from API -- editable):", pressureSpinner);
         weatherForm.addRow("", hintLabel("Wind std dev isn't reported by the weather API -- it's estimated from the " +
                 "gust value ((gust - avg) / 2.5, a rough turbulence rule of thumb), pre-filled but editable. " +
-                "Turbulence intensity isn't reported either and defaults to 10% -- override both if you have better " +
+                "Turbulence intensity isn't reported either and defaults to 17% -- override both if you have better " +
                 "local knowledge (a nearby anemometer log, prior field experience, etc)."));
 
         JTextField orkField = new JTextField();
@@ -728,8 +683,6 @@ public class ArcSimGui extends JFrame {
             File outDir = resolveOutDir(outDirField, ork, OutputNaming.ENGINE_4_FOLDER);
             int sweepSamples = (Integer) localSweepSamples.getValue();
 
-            // Constructs a synthetic Reading from the (possibly user-edited) spinner values rather
-            // than the raw cached API reading, ensuring manual overrides take effect.
             WeatherClient.Reading base = weatherClient.cachedReading();
             WeatherClient.Reading effective = new WeatherClient.Reading(
                     base.locationName, (Double) windAvgSpinner.getValue(), (Double) windGustSpinner.getValue(),
@@ -775,9 +728,6 @@ public class ArcSimGui extends JFrame {
         }
     }
 
-    // ---------------------------------------------------------------- Custom/predefined site picker
-
-    /** Combo box of predefined launch sites plus a "Custom..." option that reveals editable lat/lon/altitude fields. */
     private class SiteSelector extends JPanel {
         private final JComboBox<String> combo;
         private final JSpinner latSpinner;
@@ -803,7 +753,7 @@ public class ArcSimGui extends JFrame {
                     + "otherwise an IP-geolocation approximation) and fill it in as a Custom site.");
 
             setCustomFieldsEnabled(false);
-            syncSpinnersToSelection(); // Initializes display with MDRA's actual coordinates rather than the spinner defaults.
+            syncSpinnersToSelection();
             combo.addActionListener(e -> {
                 setCustomFieldsEnabled(combo.getSelectedIndex() == 2);
                 syncSpinnersToSelection();
@@ -820,13 +770,6 @@ public class ArcSimGui extends JFrame {
             add(locateButton);
         }
 
-        /**
-         * Resolves the current position off the EDT (DeviceLocation.fetch performs blocking
-         * network I/O) and, on success, switches the selector to Custom and populates the
-         * lat/lon/altitude fields with the result. Runs on its own SwingWorker rather than the
-         * shared job executor so this quick lookup is never queued behind a long-running engine
-         * job.
-         */
         private void onLocateCurrentPosition() {
             locateButton.setEnabled(false);
             locateButton.setText("Locating...");
@@ -842,7 +785,7 @@ public class ArcSimGui extends JFrame {
                     locateButton.setText("Use Current Location");
                     try {
                         DeviceLocation.Reading r = get();
-                        combo.setSelectedIndex(2); // Custom -- triggers setCustomFieldsEnabled(true) via the existing listener.
+                        combo.setSelectedIndex(2);
                         latSpinner.setValue(r.latitudeDeg);
                         lonSpinner.setValue(r.longitudeDeg);
                         altSpinner.setValue(r.altitudeM);
@@ -866,18 +809,11 @@ public class ArcSimGui extends JFrame {
             altSpinner.setEnabled(enabled);
         }
 
-        /**
-         * Pushes the selected preset's actual lat/lon/alt into the (disabled, display-only)
-         * spinners so they reflect MDRA's or SPAAR's true coordinates rather than remaining fixed
-         * at the spinners' construction-time defaults (39.0 / -76.1 / 100.0). Selecting
-         * "Custom..." leaves the fields unmodified (now enabled), providing a reasonable starting
-         * point for manual entry instead of resetting to zero.
-         */
         private void syncSpinnersToSelection() {
             LaunchSite preset = switch (combo.getSelectedIndex()) {
                 case 0 -> LaunchSite.MDRA_SOD_FARM;
                 case 1 -> LaunchSite.SPAAR_LANCASTER;
-                default -> null; // Custom selection: preserve any value the user has entered.
+                default -> null;
             };
             if (preset != null) {
                 latSpinner.setValue(preset.latitudeDeg);
@@ -894,8 +830,6 @@ public class ArcSimGui extends JFrame {
             }
         }
     }
-
-    // ---------------------------------------------------------------- Job execution plumbing
 
     private interface Job {
         void run(ProgressListener listener) throws Exception;
@@ -977,8 +911,6 @@ public class ArcSimGui extends JFrame {
         System.setErr(teeStream);
     }
 
-    // ---------------------------------------------------------------- Small UI helpers
-
     private JPanel withPadding(JPanel p) {
         p.setBorder(new EmptyBorder(12, 12, 12, 12));
         return p;
@@ -990,13 +922,6 @@ public class ArcSimGui extends JFrame {
         return row;
     }
 
-    /**
-     * A draggable-divider vertical split between two stacked sections of a tab (e.g. the input
-     * form above, a live leaderboard below), matching the resize behavior of the main window's
-     * tabs/log divider, applied within a single engine tab so sections competing for space (a
-     * tall form versus a leaderboard table, or a rocket preview versus a form) can be resized
-     * rather than constrained to a fixed split ratio.
-     */
     private JSplitPane verticalSplit(JComponent top, JComponent bottom, double resizeWeight) {
         JSplitPane split = new JSplitPane(JSplitPane.VERTICAL_SPLIT, top, bottom);
         split.setResizeWeight(resizeWeight);
@@ -1006,10 +931,6 @@ public class ArcSimGui extends JFrame {
         return split;
     }
 
-    /**
-     * Wraps a section of a form in a titled, padded panel, used to organize denser tabs
-     * (Engine 2 in particular) into visually distinct groups rather than a single flat row list.
-     */
     private JPanel titledGroup(String title, JComponent content) {
         JPanel wrapper = new JPanel(new BorderLayout());
         wrapper.setBorder(BorderFactory.createCompoundBorder(
@@ -1021,21 +942,11 @@ public class ArcSimGui extends JFrame {
         return wrapper;
     }
 
-    /** Applies visual emphasis to the tab's primary action (Run/Solve/Export), distinguishing it from secondary buttons such as Browse/Edit. */
     private void stylePrimaryButton(JButton b) {
         b.setFont(b.getFont().deriveFont(Font.BOLD));
         b.setMargin(new Insets(6, 16, 6, 16));
     }
 
-    /**
-     * Small gray italic explanatory label, word-wrapped to a fixed pixel width. A plain
-     * "&lt;html&gt;&lt;i&gt;...&lt;/i&gt;&lt;/html&gt;" JLabel reports its preferred width as the entire text
-     * laid out on a single line; for the longer hint strings in this GUI that exceeds 2000 px,
-     * expanding the form's GridBagLayout column width and forcing a horizontal scrollbar on any
-     * tab whose form is hosted in a JScrollPane (Engine 2, Engine 3). Constraining the HTML body
-     * to a fixed "width:" style causes Swing's HTML renderer to wrap the text across multiple
-     * lines instead.
-     */
     private JLabel hintLabel(String htmlBodyText) {
         JLabel label = new JLabel("<html><body style='width: 560px'><i>" + htmlBodyText + "</i></body></html>");
         label.setForeground(Color.GRAY);
@@ -1060,11 +971,6 @@ public class ArcSimGui extends JFrame {
         return requireFile(field, label);
     }
 
-    /**
-     * Resolves an optional output-folder field: if blank, returns the named default subfolder
-     * created next to orkFile (e.g. "Monte Carlo", "OpenRocket Solves"). An explicit path entered
-     * by the user overrides this default and is used as-is.
-     */
     private File resolveOutDir(JTextField field, File orkFile, String defaultFolderName) {
         String path = field.getText().trim();
         if (!path.isEmpty()) return new File(path);
@@ -1077,18 +983,17 @@ public class ArcSimGui extends JFrame {
                 Desktop.getDesktop().open(f.getParentFile());
             }
         } catch (Exception ignored) {
-            // Best-effort convenience only; failure is non-fatal.
+
         }
     }
 
-    /** Equivalent to openFileLocation, but for a File that is already the directory to open (e.g. a batch output folder). */
     private void openDirectory(File dir) {
         try {
             if (Desktop.isDesktopSupported()) {
                 Desktop.getDesktop().open(dir);
             }
         } catch (Exception ignored) {
-            // Best-effort convenience only; failure is non-fatal.
+
         }
     }
 
@@ -1109,7 +1014,6 @@ public class ArcSimGui extends JFrame {
         }
     }
 
-    /** Helper for constructing label/field form rows using GridBagLayout, including a file-picker variant. */
     private class FormBuilder {
         private final JPanel p = new JPanel(new GridBagLayout());
         private int row = 0;
@@ -1126,13 +1030,6 @@ public class ArcSimGui extends JFrame {
             row++;
         }
 
-        /**
-         * Adds a text field and Browse button row for selecting a folder, as opposed to a
-         * specific file, used for output-folder rows now that every engine auto-generates its
-         * own filename (see OutputNaming). An empty field indicates "same folder as the rocket
-         * file"; the caller is responsible for treating this case as null when invoking the
-         * engine.
-         */
         JPanel addDirRow(String label, JTextField field) {
             JPanel rowPanel = new JPanel(new BorderLayout(4, 0));
             rowPanel.add(field, BorderLayout.CENTER);
@@ -1161,7 +1058,6 @@ public class ArcSimGui extends JFrame {
             return buttonsPanel;
         }
 
-        /** Adds a text field and Browse button row; returns the button panel so callers can append additional buttons. */
         JPanel addFileRow(String label, JTextField field, boolean open, String filterDesc, String ext) {
             JPanel rowPanel = new JPanel(new BorderLayout(4, 0));
             rowPanel.add(field, BorderLayout.CENTER);
@@ -1194,15 +1090,6 @@ public class ArcSimGui extends JFrame {
         }
     }
 
-    /**
-     * Custom dark theme implemented without an external look-and-feel library (FlatLaf and
-     * similar are unavailable in this build environment; this approach also keeps the tool
-     * dependency-free). Implemented as a MetalTheme subclass, the standard mechanism for
-     * reskinning Swing's pure-Java "Metal" look and feel: Metal renders all components itself
-     * (unlike native system LAFs), so overriding its color accessors recolors every stock
-     * component (buttons, tabs, spinners, scrollbars, menus) uniformly. Accent color: orange on
-     * charcoal.
-     */
     private static final class ArcRocketDarkTheme extends DefaultMetalTheme {
         private final ColorUIResource bgDark = new ColorUIResource(0x1b1b22);
         private final ColorUIResource bgPanel = new ColorUIResource(0x24242c);
@@ -1219,7 +1106,6 @@ public class ArcSimGui extends JFrame {
             return "ARC Rocket Dark";
         }
 
-        // primary1/2/3: focus rings, scrollbar thumbs, selected-tab/menu highlights (accent colors).
         @Override
         protected ColorUIResource getPrimary1() {
             return flameOrangeDim;
@@ -1235,7 +1121,6 @@ public class ArcSimGui extends JFrame {
             return flameOrangeBright;
         }
 
-        // secondary1/2/3: neutral control/background grays, ordered darkest to lightest.
         @Override
         protected ColorUIResource getSecondary1() {
             return borderGray;
@@ -1251,8 +1136,6 @@ public class ArcSimGui extends JFrame {
             return bgPanel;
         }
 
-        // Metal derives most default text/background colors from "black"/"white"; inverting
-        // these two values is what produces a genuinely dark theme rather than an accented light one.
         @Override
         protected ColorUIResource getBlack() {
             return textLight;
@@ -1314,13 +1197,12 @@ public class ArcSimGui extends JFrame {
         }
     }
 
-    /** Applies the custom dark theme, plus explicit UIManager overrides for components not fully covered by MetalTheme. */
     private static void installDarkTheme() {
         try {
             MetalLookAndFeel.setCurrentTheme(new ArcRocketDarkTheme());
             UIManager.setLookAndFeel(new MetalLookAndFeel());
         } catch (Exception ignored) {
-            return; // Falls back to the currently active default look-and-feel.
+            return;
         }
         fixTextComponentClipboardShortcuts();
         Color bgDark = new Color(0x1b1b22);
@@ -1364,26 +1246,8 @@ public class ArcSimGui extends JFrame {
         UIManager.put("MenuItem.foreground", textLight);
     }
 
-    /**
-     * Restores platform-correct Cmd/Ctrl+C/V/X/A clipboard shortcuts in text components after
-     * forcing MetalLookAndFeel above.
-     *
-     * MetalLookAndFeel's built-in text-component key bindings are hardcoded to "control" (the
-     * Windows/Linux convention), not the platform menu-shortcut key. On macOS the platform default
-     * Aqua look-and-feel binds copy/paste/cut/select-all to "meta" (Cmd) instead, so forcing Metal
-     * -- done here purely to make the custom dark theme/MetalTheme skinning possible -- silently
-     * breaks Cmd+V (and Cmd+C/X/A) paste in every text field and text area for Mac users, while
-     * plain typing keeps working (which is why the symptom is specifically "can't paste" rather
-     * than a total input failure). This re-registers copy/cut/paste/select-all using
-     * getMenuShortcutKeyMaskEx(), which resolves to Cmd on macOS and Ctrl elsewhere, on top of
-     * Metal's default input maps -- fixing the Mac case without changing the already-working
-     * Windows/Linux Ctrl+V behavior.
-     */
     private static void fixTextComponentClipboardShortcuts() {
-        // getMenuShortcutKeyMaskEx() throws HeadlessException with no display present. This is a
-        // cosmetic/UX keybinding fix, not essential functionality -- if it can't determine the
-        // platform shortcut key for any reason, skip it silently rather than risk startup ever
-        // failing over it.
+
         int shortcut;
         try {
             shortcut = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
@@ -1406,12 +1270,6 @@ public class ArcSimGui extends JFrame {
         }
     }
 
-    /**
-     * Loads the Skylight Rocketry badge icon bundled at {@code com/arc/sim/icon.png} (packaged
-     * into the runnable jar via {@code src/main/resources}). Returns {@code null} if the resource
-     * cannot be located or decoded, in which case callers fall back to the platform default icon
-     * rather than failing startup.
-     */
     private static Image loadAppIcon() {
         try {
             java.net.URL url = ArcSimGui.class.getResource("/com/arc/sim/icon.png");
@@ -1422,12 +1280,6 @@ public class ArcSimGui extends JFrame {
         }
     }
 
-    /**
-     * Sets the Dock/taskbar icon for the running process. On macOS this overrides the default
-     * Java coffee-cup icon shown when the application is launched via {@code java -jar} rather
-     * than a fully native, code-signed bundle. Uses the {@code java.awt.Taskbar} API (Java 9+);
-     * silently no-ops on platforms or JVMs where this feature is unsupported.
-     */
     private static void installDockIcon(Image icon) {
         if (icon == null) return;
         try {
@@ -1438,11 +1290,9 @@ public class ArcSimGui extends JFrame {
                 }
             }
         } catch (UnsupportedOperationException | SecurityException ignored) {
-            // No dock/taskbar integration available on this platform -- not fatal.
+
         }
     }
-
-    // ---------------------------------------------------------------- Menu bar / Preferences / About
 
     private JMenuBar buildMenuBar() {
         JMenuBar bar = new JMenuBar();
@@ -1473,8 +1323,7 @@ public class ArcSimGui extends JFrame {
     private void openQuickstartGuide() {
         File guide = new File(lastDir, "QUICKSTART.md");
         if (!guide.isFile()) {
-            // Fall back to the app's own folder (see AppConfig.appDir()), in case the working
-            // folder hasn't been populated with a copy of the guide.
+
             File candidate = new File(AppConfig.appDir(), "QUICKSTART.md");
             if (candidate.isFile()) guide = candidate;
         }
@@ -1493,13 +1342,6 @@ public class ArcSimGui extends JFrame {
         }
     }
 
-    /**
-     * Shows the Preferences dialog, used both for the mandatory first-run setup wizard (firstRun
-     * = true, shown before the main window appears, with introductory framing and no Cancel
-     * option) and for later voluntary edits via File > Preferences (firstRun = false, ordinary
-     * OK/Cancel dialog). Saves to AppConfig on OK. The working folder is not configured here --
-     * see the lastDir field's Javadoc -- so this dialog only collects the weather API key.
-     */
     private static void showPreferencesDialog(Component parent, boolean firstRun) {
         AppConfig cfg = AppConfig.get();
 
@@ -1514,7 +1356,6 @@ public class ArcSimGui extends JFrame {
 
         if (firstRun) {
             JLabel welcome = new JLabel("<html><b>Welcome to Arc-Sim</b><br>" +
-                    "A Skylight Rocketry venture &mdash; a Skylight Industries company.<br>" +
                     "This app is self-contained -- it always opens file dialogs starting in its own " +
                     "folder, and writes nothing elsewhere on this computer except the optional " +
                     "setting below.</html>");
@@ -1547,8 +1388,7 @@ public class ArcSimGui extends JFrame {
             cfg.firstRunComplete = true;
             cfg.save();
         } else if (firstRun) {
-            // Even if somehow dismissed without a selection, mark first-run complete so the
-            // wizard doesn't reappear every launch.
+
             cfg.firstRunComplete = true;
             cfg.save();
         }
@@ -1558,7 +1398,6 @@ public class ArcSimGui extends JFrame {
         String message = "<html><div style='width:340px'>" +
                 "<h2 style='margin-bottom:0'>Arc-Sim</h2>" +
                 "<p style='margin-top:2px'>Version " + APP_VERSION + "</p>" +
-                "<p>A Skylight Rocketry venture &mdash; a Skylight Industries company.</p>" +
                 "<p>Rocket flight simulation and design toolkit built on the OpenRocket core " +
                 "simulation engine (RK4 integration, Barrowman aerodynamics). Four engines: " +
                 "Full Factorial Sweep, Design Solver, Geometry Export, and Weather-Driven Design.</p>" +
@@ -1570,16 +1409,7 @@ public class ArcSimGui extends JFrame {
     }
 
     public static void main(String[] args) {
-        // Silences "ERROR StatusLogger Log4j2 could not find a logging implementation..." printed
-        // by a bundled dependency (Apache POI, via log4j-api) at first use. This is a harmless
-        // startup diagnostic -- log4j-api falls back to its own built-in SimpleLoggerContextFactory
-        // regardless -- but printed with an "ERROR" tag into this app's own log panel it reads as a
-        // real failure. log4j2.StatusLogger.level=OFF does NOT suppress this specific message (that
-        // property only filters the StatusLogger's own listener output, not this bootstrap-time
-        // provider-search warning); explicitly naming the fallback provider via
-        // log4j2.loggerContextFactory skips the failed search entirely, so no warning is ever
-        // logged in the first place. Verified empirically. Must be set before any log4j class
-        // loads, so this is the first line of main().
+
         System.setProperty("log4j2.loggerContextFactory", "org.apache.logging.log4j.simple.SimpleLoggerContextFactory");
 
         installDockIcon(loadAppIcon());
@@ -1597,3 +1427,4 @@ public class ArcSimGui extends JFrame {
         }
     }
 }
+

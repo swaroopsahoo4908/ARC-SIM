@@ -9,39 +9,6 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.util.Random;
 
-/**
- * Engine 4 helper: LocalConditionsSweep.
- *
- * Component specification:
- * - Purpose: Evaluates an already-solved design (fixed ballast mass, fin height, and hole radius;
- *   this component performs no solving, in contrast to Engine 2/DesignSolver) across a narrow,
- *   locally-realistic envelope of conditions centered on a live retrieved weather reading, as
- *   distinct from Engine 1's wide worst-case envelope. This component quantifies, for the rocket
- *   as configured and the conditions expected on launch day, the sensitivity of the result to
- *   day-of variability (short-term gust or lull periods, several-degree temperature deviation, a
- *   modest pressure reading difference) -- as opposed to worst-case sensitivity across the full
- *   plausible annual weather range, which is Engine 1's function.
- *
- * Sampling model (Gaussian, centered on the retrieved reading; a normal distribution concentrates
- * most samples near the forecast center and tapers toward the tails, in contrast to a uniform
- * window in which a reading at the range boundary is weighted equally to the forecast center):
- *   - Wind speed: Gaussian(centerWindAvg, windStdDevMs), clipped to >= 0. windStdDevMs is the
- *     actual (or user-overridden) standard deviation for the day, so this samples directly from
- *     it rather than using it merely as a uniform window's half-width.
- *   - Wind direction: Gaussian(centerWindDir, WIND_DIR_SPREAD_DEG/2), wrapped to 0-360 deg.
- *   - Temperature: Gaussian(centerTempC, TEMP_SPREAD_C/2).
- *   - Pressure: Gaussian(centerPressureMbar, PRESSURE_SPREAD_MBAR/2).
- *   - Wind standard deviation and turbulence: held fixed at the reported or estimated values, as
- *     these characterize the day's gustiness profile rather than an independently uncertain
- *     envelope-level parameter.
- * The *_SPREAD_* constants are treated as an approximate 2-sigma envelope (divided by 2 to obtain
- * the Gaussian sigma), so approximately 95% of samples fall within the same stated range used by
- * the prior uniform-sampling implementation, now realistically weighted toward the center. These
- * spread values are deliberately conservative engineering estimates for same-day short-term
- * variability, not a statistical model fit to measured variance data; adjust them if higher-
- * fidelity local data is available (a full day's forecast history, a nearby station's historical
- * variance, etc.).
- */
 public class LocalConditionsSweep {
 
     private static final double WIND_SPREAD_SIGMA_MULT = 2.0;
@@ -51,12 +18,6 @@ public class LocalConditionsSweep {
     private static final double APOGEE_TOLERANCE_M = 0.1;
     private static final double TIME_TOLERANCE_S = 0.2;
 
-    /**
-     * Executes sampleCount simulations of the design currently applied to `runner`. The caller is
-     * responsible for having already set ballast mass, fin height, and hole radius to the design
-     * under evaluation; this class modifies only the environment, never rocket components.
-     * Returns the .xlsx file written, or null if cancelled before any output was produced.
-     */
     public static File run(SimRunner runner, LaunchSite site,
                             double centerWindAvgMs, double windStdDevMs, double turbulencePct, double centerWindDirDeg,
                             double centerTempC, double centerPressureMbar,
@@ -64,7 +25,7 @@ public class LocalConditionsSweep {
                             int sampleCount, File orkFile, File outDir,
                             ProgressListener listener, LeaderboardListener leaderboardListener) throws Exception {
         File outFile = OutputNaming.uniqueFile(orkFile, outDir, "localweather", "xlsx");
-        Random rng = new Random(); // Non-deterministic seed; this evaluates realistic outcome variability, not a reproducible baseline
+        Random rng = new Random();
         EtaTracker eta = new EtaTracker(sampleCount);
         TopNLeaderboard leaderboard = new TopNLeaderboard(10);
 
@@ -195,3 +156,4 @@ public class LocalConditionsSweep {
         return n < 2 ? Double.NaN : Math.sqrt(sumSq / (n - 1));
     }
 }
+

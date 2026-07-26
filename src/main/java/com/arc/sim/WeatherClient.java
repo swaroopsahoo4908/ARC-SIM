@@ -11,27 +11,10 @@ import java.time.format.DateTimeFormatter;
 import java.time.ZoneId;
 import java.util.Locale;
 
-/**
- * Retrieves current local weather conditions from weatherapi.com for Engine 6
- * (WeatherDrivenDesign), enabling a design solve to run against measured launch-day conditions
- * rather than manually entered estimates.
- *
- * Rate limiting: one instance is created per GUI session/tab and persists for the tab's
- * lifetime. The cache/cooldown is keyed per site (rounded lat/lon), not globally:
- * getCurrent(lat,lon) issues a network request only if this is the first call for those
- * coordinates or that site's hourly cooldown has elapsed; otherwise it returns the site's cached
- * reading. This yields fetch-on-start, then at-most-hourly refresh, per site: switching the
- * launch site selector (MDRA / SPAAR / Custom) always fetches that site's current conditions
- * rather than replaying a different site's cached reading, while a repeated fetch of the same
- * site within an hour reuses the cache instead of issuing redundant API calls. No mechanism is
- * provided to bypass a site's cooldown.
- */
 public class WeatherClient {
-    private static final long REFRESH_INTERVAL_MS = 60L * 60L * 1000L; // 1 hour
+    private static final long REFRESH_INTERVAL_MS = 60L * 60L * 1000L;
     private static final String API_BASE = "https://api.weatherapi.com/v1/current.json";
-    // Coordinates are rounded to 3 decimal places (~110 m) before use as a cache key, preventing
-    // floating-point noise in a re-selected preset's lat/lon from causing a spurious cache miss
-    // and an unnecessary network call.
+
     private static final int CACHE_KEY_DECIMALS = 3;
 
     private static class CacheEntry {
@@ -42,9 +25,7 @@ public class WeatherClient {
     private volatile String apiKey;
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
     private final java.util.Map<String, CacheEntry> cacheBySite = new java.util.HashMap<>();
-    // Tracks the most recently fetched/served site, so cachedReading()/hasCached() (used by the
-    // GUI to determine whether a reading is available to run with) reflect the currently
-    // selected site rather than an arbitrary or first-fetched one.
+
     private volatile Reading lastServed;
     private volatile long lastServedFetchMs = -1;
 
@@ -52,12 +33,6 @@ public class WeatherClient {
         this.apiKey = apiKey;
     }
 
-    /**
-     * Updates the API key in place (mutable rather than final) so that a key entered via
-     * File > Preferences after this client was constructed -- e.g. a GUI tab built once at
-     * startup -- takes effect on the next fetch without requiring an application restart, while
-     * the fetch-cooldown/cache state tied to this instance is preserved.
-     */
     public void setApiKey(String apiKey) {
         this.apiKey = apiKey;
     }
@@ -66,7 +41,6 @@ public class WeatherClient {
         return String.format(Locale.ROOT, "%." + CACHE_KEY_DECIMALS + "f,%." + CACHE_KEY_DECIMALS + "f", lat, lon);
     }
 
-    /** A single fetched weather reading, including a wind standard-deviation estimate derived from gust (not a directly measured value). */
     public static class Reading {
         public final String locationName;
         public final double windAvgMs;
@@ -89,16 +63,6 @@ public class WeatherClient {
             this.fetchedAt = fetchedAt;
         }
 
-        /**
-         * weatherapi.com reports an instantaneous gust value, not wind speed variance or standard
-         * deviation, so no directly reported figure exists for the solver's windStdDevMs input.
-         * This method returns an order-of-magnitude estimate only, applying the standard
-         * approximation that a short-term gust sits approximately 2-3 standard deviations above
-         * the mean in turbulent surface wind: (gust - avg) / 2.5. The estimate is pre-filled into
-         * an editable GUI field to permit override with higher-fidelity local data (a nearby
-         * anemometer log, a forecast model reporting variance, or prior field measurements at the
-         * site).
-         */
         public double estimatedWindStdDevMs() {
             return Math.max(0.0, (windGustMs - windAvgMs) / 2.5);
         }
@@ -108,33 +72,20 @@ public class WeatherClient {
         }
     }
 
-    /** Reports whether any site has been successfully fetched, i.e. whether a reading is available to run with. */
     public boolean hasCached() {
         return lastServed != null;
     }
 
-    /** Returns the most recently fetched/served reading, for whichever site it originated from. */
     public Reading cachedReading() {
         return lastServed;
     }
 
-    /** Returns milliseconds until the most-recently-served site's cooldown expires and it becomes eligible for re-fetch. */
     public long msUntilNextAllowedFetch() {
         if (lastServedFetchMs < 0) return 0;
         long elapsed = System.currentTimeMillis() - lastServedFetchMs;
         return Math.max(0, REFRESH_INTERVAL_MS - elapsed);
     }
 
-    /**
-     * Returns the current weather for (lat, lon), issuing a network request only if this site has
-     * not previously been fetched or its hourly cooldown has elapsed; otherwise returns the
-     * site's cached reading unmodified. The cache/cooldown is keyed per site (see class-level
-     * documentation), so switching launch sites always retrieves that site's current conditions
-     * rather than a previously cached site's reading. No override is provided to bypass a site's
-     * cooldown: at most one network call per site per hour. This method executes synchronously
-     * and must be invoked off the Swing EDT (background thread), consistent with all other
-     * network calls.
-     */
     public Reading getCurrent(double lat, double lon) throws Exception {
         String key = siteKey(lat, lon);
         CacheEntry entry = cacheBySite.get(key);
@@ -182,3 +133,4 @@ public class WeatherClient {
         return r;
     }
 }
+

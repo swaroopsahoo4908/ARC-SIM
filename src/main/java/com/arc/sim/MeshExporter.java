@@ -7,34 +7,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Engine 3: MeshExporter. Converts extracted rocket geometry (.ork-derived) to STL/OBJ mesh
- * files.
- *
- * Converts RocketGeometryExtractor's simplified 2D side-profile (nose cone / body tube /
- * transition radii by station, plus trapezoidal fin planforms) into a triangle mesh, revolved
- * about the rocket's X axis, and writes ASCII STL and/or Wavefront OBJ output.
- *
- * Fidelity constraints, approximate geometry only, not CAD-accurate:
- *   - Body-of-revolution surfaces only (nose cone / body tube / transition); no wall thickness,
- *     no internal components, no fillets, no surface texture.
- *   - Fins are extruded flat trapezoidal panels (root chord / tip chord / sweep / height) of
- *     small constant thickness, spaced evenly by fin count and base rotation. Airfoil cross-
- *     section profiles are not modeled.
- *   - Multi-body stacking uses the same no-gaps/no-overlaps serial-stacking assumption as
- *     RocketPreviewPanel; side-by-side staging (boosters/pods) is not rendered.
- * Suitable for rapid 3D-print or CAD-import verification of the outer mold line; not a
- * substitute for a dimensionally precise CAD model.
- *
- * Units: OpenRocket's internal units are SI (meters). This exporter scales all output by
- * MM_PER_M so written STL/OBJ files are in millimeters, the standard convention for
- * STL-consuming CAD and slicer tools.
- */
 public class MeshExporter {
 
     private static final double MM_PER_M = 1000.0;
-    private static final int REVOLUTION_SEGMENTS = 32; // Circumferential resolution of the body-of-revolution mesh.
-    private static final double FIN_THICKNESS_M = 0.003; // 3 mm; nominal thickness for solid-closure only, not structural.
+    private static final int REVOLUTION_SEGMENTS = 32;
+    private static final double FIN_THICKNESS_M = 0.003;
 
     public static class Triangle {
         public final double[] n = new double[3];
@@ -57,7 +34,6 @@ public class MeshExporter {
         }
     }
 
-    /** Builds the full triangle mesh (bodies + fins) from an extracted rocket geometry, in millimeters. */
     public static List<Triangle> buildMesh(RocketGeometryExtractor.Geometry g) {
         List<Triangle> tris = new ArrayList<>();
         for (RocketGeometryExtractor.BodyShape body : g.bodies) {
@@ -65,7 +41,7 @@ public class MeshExporter {
         }
         if (!g.bodies.isEmpty()) {
             RocketGeometryExtractor.BodyShape last = g.bodies.get(g.bodies.size() - 1);
-            addEndCap(tris, last.xStart + last.length, last.aftRadius, false); // Aft cap, facing +X.
+            addEndCap(tris, last.xStart + last.length, last.aftRadius, false);
         }
         for (RocketGeometryExtractor.FinShape fin : g.fins) {
             addFinSet(tris, fin);
@@ -73,12 +49,6 @@ public class MeshExporter {
         return tris;
     }
 
-    /**
-     * Builds a mesh of the fin set(s) only, excluding body tube/nose cone/transition surfaces.
-     * Used by Engine 4 (WeatherDrivenDesign) to export standalone fin-only CAD for each
-     * wind-speed margin variant; only fin height varies across variants, so the body geometry
-     * (identical to the main design) does not require re-export for each margin.
-     */
     public static List<Triangle> buildFinSetMesh(List<RocketGeometryExtractor.FinShape> fins) {
         List<Triangle> tris = new ArrayList<>();
         for (RocketGeometryExtractor.FinShape fin : fins) {
@@ -91,14 +61,6 @@ public class MeshExporter {
         return new double[]{x * MM_PER_M, r * Math.cos(theta) * MM_PER_M, r * Math.sin(theta) * MM_PER_M};
     }
 
-    /**
-     * Revolves the body's sampled radius profile (body.profileR, sourced from OpenRocket's
-     * SymmetricComponent.getRadius(x), one station per axial sample) about the X axis, producing
-     * one ring of triangles per pair of adjacent stations. Sampling the true profile, rather than
-     * interpolating linearly between fore and aft radius, is required to represent ellipsoid,
-     * ogive, power-series, parabolic, and Haack nose cones and transitions as curved solids;
-     * linear interpolation is exact only for Shape.CONICAL.
-     */
     private static void addBodyOfRevolution(List<Triangle> tris, RocketGeometryExtractor.BodyShape body) {
         double[] profile = body.profileR;
         int stations = profile.length;
@@ -113,7 +75,7 @@ public class MeshExporter {
                 double t0 = i * dTheta, t1 = (i + 1) * dTheta;
 
                 if (r0 < 1e-9) {
-                    // Station collapses to a point (nose tip); emit a fan triangle in place of a quad.
+
                     double[] apex = cyl(x0, 0, 0);
                     double[] b0 = cyl(x1, r1, t0);
                     double[] b1 = cyl(x1, r1, t1);
@@ -135,7 +97,6 @@ public class MeshExporter {
         }
     }
 
-    /** Flat disc cap at a given axial station; closes off the aft end of the last body. */
     private static void addEndCap(List<Triangle> tris, double x, double radius, boolean facingNegativeX) {
         if (radius < 1e-9) return;
         double dTheta = 2 * Math.PI / REVOLUTION_SEGMENTS;
@@ -152,23 +113,17 @@ public class MeshExporter {
         }
     }
 
-    /**
-     * Extruded flat trapezoidal panels, evenly spaced by fin count about the tube, each modeled
-     * as a thin solid slab (root/tip chord by height, +/- FIN_THICKNESS_M/2 tangentially) to
-     * produce a closed volume rather than a zero-thickness sheet.
-     */
     private static void addFinSet(List<Triangle> tris, RocketGeometryExtractor.FinShape fin) {
         double halfT = FIN_THICKNESS_M / 2.0;
         double dTheta = 2 * Math.PI / fin.finCount;
 
-        // Planform corners in the fin's local (axial x, radial r) plane.
         double rootLeadX = fin.xStart, rootTrailX = fin.xStart + fin.rootChord;
         double tipLeadX = fin.xStart + fin.sweep, tipTrailX = fin.xStart + fin.sweep + fin.tipChord;
         double rBase = fin.parentRadius, rTip = fin.parentRadius + fin.height;
 
         for (int i = 0; i < fin.finCount; i++) {
             double theta = fin.baseRotationRad + i * dTheta;
-            // Radial unit vector (in the fin mounting plane) and tangential unit vector (thickness direction).
+
             double radY = Math.cos(theta), radZ = Math.sin(theta);
             double tanY = -Math.sin(theta), tanZ = Math.cos(theta);
 
@@ -180,14 +135,13 @@ public class MeshExporter {
             double[][] plusFace = offsetQuad(rl, rt, tt, tl, tanY, tanZ, halfT);
             double[][] minusFace = offsetQuad(rl, rt, tt, tl, tanY, tanZ, -halfT);
 
-            addQuad(tris, plusFace[0], plusFace[1], plusFace[2], plusFace[3]); // +thickness face.
-            addQuad(tris, minusFace[3], minusFace[2], minusFace[1], minusFace[0]); // -thickness face, reversed winding.
+            addQuad(tris, plusFace[0], plusFace[1], plusFace[2], plusFace[3]);
+            addQuad(tris, minusFace[3], minusFace[2], minusFace[1], minusFace[0]);
 
-            // Side walls closing the slab: leading edge, trailing edge, tip, root.
-            addQuad(tris, minusFace[0], minusFace[3], plusFace[3], plusFace[0]); // Leading edge (root-lead to tip-lead).
-            addQuad(tris, plusFace[1], plusFace[2], minusFace[2], minusFace[1]); // Trailing edge.
-            addQuad(tris, minusFace[3], minusFace[2], plusFace[2], plusFace[3]); // Tip.
-            addQuad(tris, plusFace[0], plusFace[1], minusFace[1], minusFace[0]); // Root.
+            addQuad(tris, minusFace[0], minusFace[3], plusFace[3], plusFace[0]);
+            addQuad(tris, plusFace[1], plusFace[2], minusFace[2], minusFace[1]);
+            addQuad(tris, minusFace[3], minusFace[2], plusFace[2], plusFace[3]);
+            addQuad(tris, plusFace[0], plusFace[1], minusFace[1], minusFace[0]);
         }
     }
 
@@ -199,8 +153,7 @@ public class MeshExporter {
     }
 
     private static double[] offset(double[] p, double tanY, double tanZ, double t) {
-        // p is expressed in meters here (conversion to mm occurs at addQuad); the thickness
-        // offset is applied in meters, then scaled.
+
         return new double[]{p[0] * MM_PER_M, (p[1] + tanY * t) * MM_PER_M, (p[2] + tanZ * t) * MM_PER_M};
     }
 
@@ -209,7 +162,6 @@ public class MeshExporter {
         tris.add(new Triangle(a, c, d));
     }
 
-    /** Writes an ASCII STL file (millimeters). */
     public static void writeStl(List<Triangle> tris, File out, String solidName) throws IOException {
         try (PrintWriter pw = new PrintWriter(out, StandardCharsets.UTF_8)) {
             pw.println("solid " + sanitize(solidName));
@@ -226,7 +178,6 @@ public class MeshExporter {
         }
     }
 
-    /** Writes a Wavefront OBJ file (millimeters). Vertices are not deduplicated, trading output size for implementation simplicity. */
     public static void writeObj(List<Triangle> tris, File out, String objectName) throws IOException {
         try (PrintWriter pw = new PrintWriter(out, StandardCharsets.UTF_8)) {
             pw.println("# Exported by ARC Rocket Simulation Toolkit -- Engine 3: Geometry Export");
@@ -251,3 +202,4 @@ public class MeshExporter {
         return s == null ? "rocket" : s.replaceAll("[^A-Za-z0-9_.-]", "_");
     }
 }
+

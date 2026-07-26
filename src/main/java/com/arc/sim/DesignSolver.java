@@ -9,130 +9,40 @@ import info.openrocket.core.rocketcomponent.TrapezoidFinSet;
 import java.io.File;
 import java.util.List;
 
-/**
- * Engine 2: DesignSolver.
- *
- * Component specification:
- * - Purpose: For a single fixed atmospheric/wind condition and a target apogee and flight-time
- *   window, solves for the ballast mass and fin height that satisfy those targets.
- *
- * Control allocation (3 degrees of freedom, 2 targets):
- * - Ballast mass is the primary control variable for total flight time. With parachute geometry
- *   fixed, increased mass produces a higher descent rate under the same canopy, reducing total
- *   flight time.
- * - Fin height is the primary control variable for apogee. Increased fin height increases
- *   parasitic drag during ascent, reducing apogee. Its effect on total flight time is minor, as
- *   descent dynamics are dominated by the parachute.
- * - Parachute center-hole radius (0-4 in radius / 0-8 in diameter, 0-0.1016 m) is a secondary
- *   control variable for total flight time, solved after ballast and fin height in each outer
- *   iteration. A spill hole reduces effective canopy area, increasing descent rate with the same
- *   directional effect as ballast mass, providing an independent control to reach the flight-time
- *   window when ballast alone saturates at a search bound, without perturbing fin height (which
- *   would reintroduce apogee error).
- *
- * Fin sweep is held invariant. It is read once for logging purposes and is never modified from
- * its value in the uploaded file; it is never passed to setSweep(). An earlier revision of this
- * solver used sweep as a tertiary apogee trim variable; this was removed because its effect on
- * apogee is weak and noisy relative to its effect on stability margin, and a solver operating on
- * a near-flat control surface tends to walk that variable to whichever search bound appears
- * marginally favorable under noise, effectively eliminating it as a useful control. Neither the
- * GUI nor this solver exposes fin sweep as a controllable parameter.
- *
- * Convergence ordering: each outer iteration solves ballast (for flight time) first, using the
- * fin height and hole radius from the previous iteration; then solves fin height (for apogee)
- * using the updated ballast value; then solves parachute hole radius (for flight time again) last,
- * using the updated fin height. Concluding the iteration with a flight-time solve following the
- * apogee solve ensures both targets are re-evaluated against the current fin-height value each
- * round; fin height is always solved most recently among the apogee-affecting variables, so
- * apogee error does not reintroduce itself after the last apogee tuning step.
- *
- * Phase 2 -- pattern search (escapes the bisection fixed point): the three-way alternating
- * bisection described above constitutes a Gauss-Seidel-style fixed-point iteration, in which each
- * control variable is solved to zero its own target while holding the others fixed. This is
- * computationally efficient but is not equivalent to joint minimization of the combined apogee
- * and flight-time error. Under a fixed atmosphere and fixed targets, the iteration is fully
- * deterministic: once the (ballast, fin height, hole radius) triple stabilizes between passes,
- * every subsequent bisection pass reproduces that identical triple, and no further progress is
- * possible via this method. When STAGNATION_LIMIT consecutive passes fail to improve upon the
- * best combined error observed, the solver transitions to a direct compass/pattern search on the
- * combined-error objective: each pass perturbs ballast, then fin height, then hole radius by a
- * step size (evaluating +step and -step and retaining whichever reduces combined error, or
- * leaving that variable unchanged if neither improves), proceeding from the best point found to
- * date. Any accepted move updates the running incumbent immediately, so the leaderboard reflects
- * continuous progress rather than a static entry. A pass producing no improving move in any of the
- * three directions halves the step size and retries from the same point; once all three step
- * sizes fall below a small fraction of their respective bound ranges, the solver terminates,
- * having reached the closest achievable result given the search resolution rather than an
- * artifact of the bisection fixed point.
- *
- * Convergence budget: the outer loop continues iterating -- alternating ballast, fin height, and
- * hole radius bisection passes, followed by pattern-search passes after stagnation is detected --
- * until both targets are simultaneously within tolerance, the pattern search's step size falls
- * below its resolution floor, or MAX_OUTER_ITERS (default 1000, adjustable via
- * Bounds.maxOuterIters) outer passes are reached, whichever occurs first. No wall-clock limit is
- * imposed; this is a deliberate design choice, as minimizing apogee and flight-time deviation from
- * the requested targets takes priority over a fixed time budget. The final design corresponds to
- * whichever pass (bisection or pattern search) achieved the lowest combined error across the full
- * run; a non-convergence notice is printed if both targets are not met within tolerance at that
- * point.
- *
- * Compatibility: supports arbitrary .ork files via two mechanisms:
- *   1. Auto-detection (RocketComponents) provides a default selection: lowest body tube for
- *      ballast, first parachute and fin set identified.
- *   2. ComponentSelection permits a caller (typically the GUI, via RocketInspector) to override
- *      any of these selections explicitly, required for airframes where the default selection is
- *      incorrect -- multi-stage rockets, rockets with drogue and main parachutes, multiple fin
- *      sets, and similar configurations.
- * Bounds defines the search range for ballast and fin height; default values are sized for small
- * to mid-size rockets and should be increased for large or heavy airframes (see Bounds.big() for
- * a representative starting configuration).
- */
 public class DesignSolver {
 
-    // Tightened relative to the original 0.25 m / 0.5 s tolerances. MAX_BISECTION_ITERS=30 already
-    // yields a per-bisection search resolution of (range / 2^30), many orders of magnitude finer
-    // than either tolerance below, so tightening these values forces the solver to converge closer
-    // to target before declaring convergence, rather than accepting unnecessary residual error.
     private static final double APOGEE_TOLERANCE_M = 0.1;
-    private static final double TIME_TOLERANCE_S = 0.2; // Used only for the early-exit convergence check
+    private static final double TIME_TOLERANCE_S = 0.2;
     private static final int MAX_BISECTION_ITERS = 30;
-    private static final int DEFAULT_MAX_OUTER_ITERS = 1000;     // Default/maximum outer-pass budget (adjustable via Bounds.maxOuterIters)
+    private static final int DEFAULT_MAX_OUTER_ITERS = 1000;
     private static final double IN_TO_M = 0.0254;
-    private static final double MAX_HOLE_RADIUS_IN = 3.5; // 7 in hole diameter, default maximum
+    private static final double MAX_HOLE_RADIUS_IN = 3.5;
 
-    // Phase-2 pattern search (see class-level specification): activates after this many
-    // consecutive bisection passes fail to improve upon the best combined error found so far. A
-    // value of 2 is sufficient because the bisection map is fully deterministic under a fixed
-    // atmosphere, so a repeated result is conclusive rather than attributable to noise.
     private static final int STAGNATION_LIMIT = 2;
-    private static final double PATTERN_INITIAL_STEP_FRACTION = 0.08; // Relative to each control variable's bound range
-    // Tightened from 1e-4. Pattern search now refines an additional order of magnitude before
-    // terminating, yielding a more precise final result once bisection has stagnated.
-    private static final double PATTERN_MIN_STEP_FRACTION = 1e-5;     // Termination threshold for step-size shrinkage
+    private static final double PATTERN_INITIAL_STEP_FRACTION = 0.08;
+
+    private static final double PATTERN_MIN_STEP_FRACTION = 1e-5;
     private static final double PATTERN_SHRINK_FACTOR = 0.5;
 
-    /** Optional explicit component selection; any null field falls back to auto-detection. */
     public static class ComponentSelection {
         public List<MassComponent> ballastComponents;
         public Parachute parachute;
         public TrapezoidFinSet finSet;
     }
 
-    /** Search bounds for ballast mass and fin height. Defaults are sized for small/mid-size rockets; scale up for large airframes. */
     public static class Bounds {
         public double minBallastKg = 0.0;
         public double maxBallastKg = 5.0;
         public double minFinHeightM = 0.01;
         public double maxFinHeightM = 0.5;
         public double minHoleRadiusM = 0.0;
-        public double maxHoleRadiusM = MAX_HOLE_RADIUS_IN * IN_TO_M; // 3.5 in radius (7 in diameter) default cap
-        public int maxOuterIters = DEFAULT_MAX_OUTER_ITERS; // Adjustable solver-pass budget; see class-level specification
+        public double maxHoleRadiusM = MAX_HOLE_RADIUS_IN * IN_TO_M;
+        public int maxOuterIters = DEFAULT_MAX_OUTER_ITERS;
 
         public static Bounds defaults() {
             return new Bounds();
         }
 
-        /** Starting configuration for large/heavy rockets: increased ballast capacity and fin height range. */
         public static Bounds big() {
             Bounds b = new Bounds();
             b.maxBallastKg = 25.0;
@@ -141,13 +51,6 @@ public class DesignSolver {
         }
     }
 
-    /**
-     * The final solved design and the flight result it produced. Returned by the core run()
-     * overload so a caller (e.g., Engine 4 / WeatherDrivenDesign) can chain further work off the
-     * same solved values -- exporting CAD of the solved geometry, re-solving fin height alone for
-     * margin conditions, and similar operations -- without re-parsing the saved .ork file or
-     * re-running the solver.
-     */
     public static class Result {
         public final double ballastKg;
         public final double finHeightM;
@@ -188,7 +91,6 @@ public class DesignSolver {
         }
     }
 
-    /** Minimal entry point: auto-detects components, uses default bounds. CLI-only; output is saved alongside the input file. */
     public static void run(File orkFile, double targetApogeeM, double targetTimeMinS, double targetTimeMaxS,
                             LaunchSite site, double windAvg, double windStdDev, double turbulencePct,
                             double windDir, double tempC, double pressureMbar) throws Exception {
@@ -196,7 +98,6 @@ public class DesignSolver {
                 windStdDev, turbulencePct, windDir, tempC, pressureMbar, null, null, null, ProgressListener.NONE);
     }
 
-    /** Accepts explicit component selection and/or bounds (either may be null for defaults/auto-detection). CLI-only; output is saved alongside the input file. */
     public static void run(File orkFile, double targetApogeeM, double targetTimeMinS, double targetTimeMaxS,
                             LaunchSite site, double windAvg, double windStdDev, double turbulencePct,
                             double windDir, double tempC, double pressureMbar,
@@ -205,7 +106,6 @@ public class DesignSolver {
                 windStdDev, turbulencePct, windDir, tempC, pressureMbar, selection, bounds, null, ProgressListener.NONE);
     }
 
-    /** Backward-compatible overload; no live leaderboard updates. outDir may be null (defaults to the input file's own directory). */
     public static Result run(SimRunner runner, File orkFile, double targetApogeeM, double targetTimeMinS, double targetTimeMaxS,
                             LaunchSite site, double windAvg, double windStdDev, double turbulencePct,
                             double windDir, double tempC, double pressureMbar,
@@ -214,18 +114,6 @@ public class DesignSolver {
                 windDir, tempC, pressureMbar, selection, bounds, outDir, listener, LeaderboardListener.NONE);
     }
 
-    /**
-     * Core entry point. Accepts an already-loaded SimRunner so a caller (the GUI) can inspect the
-     * rocket's components first -- via RocketInspector, selecting exact ballast, parachute, and
-     * fin set object instances -- and then execute on that same loaded document, avoiding a file
-     * reload that would produce a distinct set of component object instances and invalidate the
-     * selection.
-     *
-     * leaderboardListener receives incremental top-10 updates ranked by the normalized combined
-     * apogee and flight-time error (the same metric used for bestErr below), representing the
-     * closest simulation to target observed to date. Updates are issued on every outer pass that
-     * changes the ranking.
-     */
     public static Result run(SimRunner runner, File orkFile, double targetApogeeM, double targetTimeMinS, double targetTimeMaxS,
                             LaunchSite site, double windAvg, double windStdDev, double turbulencePct,
                             double windDir, double tempC, double pressureMbar,
@@ -239,9 +127,9 @@ public class DesignSolver {
                         ? selection.ballastComponents : RocketComponents.findBallastComponents(rocket);
         RocketComponents.BallastControl ballast = new RocketComponents.BallastControl(ballastComps);
         TrapezoidFinSet finSet = (selection != null && selection.finSet != null) ? selection.finSet : RocketComponents.findFinSet(rocket);
-        Parachute chute = (selection != null && selection.parachute != null) ? selection.parachute : RocketComponents.findMainParachute(rocket); // Effective diameter controlled solely via the hole-radius variable
+        Parachute chute = (selection != null && selection.parachute != null) ? selection.parachute : RocketComponents.findMainParachute(rocket);
 
-        double fixedSweepM = finSet.getSweep(); // Read once, never modified; see class-level specification
+        double fixedSweepM = finSet.getSweep();
         RocketComponents.ParachuteHoleControl hole = new RocketComponents.ParachuteHoleControl(chute);
 
         System.out.printf("Ballast starting total: %.1f g%n", ballast.getCurrentTotalKg() * 1000);
@@ -266,27 +154,15 @@ public class DesignSolver {
         SimRunner.FlightResult last = null;
         int outer = 0;
         boolean converged = false;
-        // Live runtime estimator: measures observed seconds per pass and projects the remainder.
-        // Each outer pass consumes a variable number of simulation runs (bisection can early-exit
-        // per control variable), so a fixed "passes remaining x first-pass time" estimate would
-        // drift; EtaTracker instead uses the running average rate, which self-corrects as passes
-        // complete.
+
         EtaTracker eta = new EtaTracker(bounds.maxOuterIters);
 
-        // Tracks the closest-to-target result observed across all passes. Because the loop may
-        // terminate at bounds.maxOuterIters without full convergence, the reported/saved result
-        // must be whichever pass achieved the nearest approach to both targets (by normalized
-        // combined error), not necessarily the final pass. Shared by both the bisection phase and
-        // the pattern-search phase below (see class-level specification).
         TopNLeaderboard leaderboard = new TopNLeaderboard(10);
         BestTracker tracker = new BestTracker(ballastKg, finHeightM, holeRadiusM, leaderboard, leaderboardListener);
         boolean cancelled = false;
         int noImprovePasses = 0;
         boolean patternSearchMode = false;
 
-        // Pattern-search step sizes, expressed as fractions of each control variable's bound
-        // range; applicable only once patternSearchMode is active. Monotonically non-increasing
-        // as the search narrows.
         double stepBallastKg = (bounds.maxBallastKg - bounds.minBallastKg) * PATTERN_INITIAL_STEP_FRACTION;
         double stepFinHeightM = (bounds.maxFinHeightM - bounds.minFinHeightM) * PATTERN_INITIAL_STEP_FRACTION;
         double stepHoleRadiusM = (bounds.maxHoleRadiusM - bounds.minHoleRadiusM) * PATTERN_INITIAL_STEP_FRACTION;
@@ -301,17 +177,13 @@ public class DesignSolver {
             boolean improvedThisPass;
 
             if (!patternSearchMode) {
-                // Phase 1: alternating bisection (computationally efficient, converges to a fixed point).
-                // 1) Ballast first, using the fin height and hole radius from the previous round.
+
                 ballastKg = solveBallastForFlightTime(runner, ballast, finSet, finHeightM, fixedSweepM, hole, holeRadiusM,
                         env, targetTimeMinS, targetTimeMaxS, ballastKg, bounds);
 
-                // 2) Fin height, against the updated ballast, tuning apogee.
                 finHeightM = solveFinHeightForApogee(runner, ballast, finSet, ballastKg, fixedSweepM, hole, holeRadiusM,
                         env, targetApogeeM, finHeightM, bounds);
 
-                // 3) Parachute hole radius last, as a second independent flight-time trim against
-                // the updated fin height, for cases where ballast alone has saturated.
                 holeRadiusM = solveHoleRadiusForFlightTime(runner, ballast, ballastKg, finSet, finHeightM, fixedSweepM,
                         hole, env, targetTimeMinS, targetTimeMaxS, holeRadiusM, bounds);
 
@@ -330,11 +202,7 @@ public class DesignSolver {
                 } else {
                     noImprovePasses++;
                     if (noImprovePasses >= STAGNATION_LIMIT) {
-                        // The bisection map is deterministic under a fixed atmosphere: a repeated
-                        // result indicates every subsequent bisection pass would reproduce the
-                        // identical triple. Transition to direct minimization of the combined
-                        // error rather than expending the remaining budget re-deriving the same
-                        // fixed point.
+
                         patternSearchMode = true;
                         ballastKg = tracker.bestBallastKg;
                         finHeightM = tracker.bestFinHeightM;
@@ -345,7 +213,7 @@ public class DesignSolver {
                     }
                 }
             } else {
-                // Phase 2: compass/pattern search directly on combined error (see class-level specification).
+
                 double workBallast = tracker.bestBallastKg, workFin = tracker.bestFinHeightM, workHole = tracker.bestHoleRadiusM;
                 improvedThisPass = false;
 
@@ -394,9 +262,7 @@ public class DesignSolver {
                 holeRadiusM = tracker.bestHoleRadiusM;
                 last = tracker.best;
                 if (last == null) {
-                    // Every evaluation to date (bisection and pattern search) has failed to
-                    // produce a valid simulation result; with no scored result available, pattern
-                    // search has no basis for further progress.
+
                     System.out.println("No successful simulation yet after " + (outer + 1) + " passes -- check the rocket file/environment; stopping.");
                     break;
                 }
@@ -446,9 +312,6 @@ public class DesignSolver {
             return null;
         }
 
-        // Use the best pass found across both phases (which is equivalent to the final pass in
-        // the converged case, since that pass is strictly the lowest combined error by
-        // construction), rather than defaulting to the last pass executed.
         if (tracker.best != null && tracker.best != last) {
             ballastKg = tracker.bestBallastKg;
             finHeightM = tracker.bestFinHeightM;
@@ -492,12 +355,6 @@ public class DesignSolver {
             System.out.println("Both targets met.");
         }
 
-        // The solved design is always written to a new file; the original input .ork is never
-        // modified (it is only read via SimRunner), and a fixed output filename is not reused,
-        // so repeated solver runs -- against this file or any other -- never overwrite a prior
-        // solved result. Filename format is "<orkBase>_solved_<timestamp>.ork", written alongside
-        // the original; see OutputNaming for the collision-safe naming scheme shared across all
-        // engines.
         File resolvedOutDir = outDir != null ? outDir : OutputNaming.namedSubfolder(orkFile, OutputNaming.OPENROCKET_SOLVES_FOLDER);
         File outFile = OutputNaming.uniqueFile(orkFile, resolvedOutDir, "solved", "ork");
         new GeneralRocketSaver().save(outFile, runner.getDocument());
@@ -506,7 +363,6 @@ public class DesignSolver {
         return new Result(ballastKg, finHeightM, holeRadiusM, fixedSweepM, check, apogeeOk, timeOk, outFile);
     }
 
-    /** Bisection solve on fin height; apogee decreases monotonically as fin height (drag) increases. */
     private static double solveFinHeightForApogee(SimRunner runner, RocketComponents.BallastControl ballast, TrapezoidFinSet finSet,
                                                     double ballastKg, double fixedSweepM,
                                                     RocketComponents.ParachuteHoleControl hole, double holeRadiusM,
@@ -528,15 +384,14 @@ public class DesignSolver {
             }
             if (Math.abs(r.apogeeM - targetApogeeM) <= APOGEE_TOLERANCE_M) break;
             if (r.apogeeM > targetApogeeM) {
-                lo = mid; // Apogee exceeds target; increased drag required, so increase fin height
+                lo = mid;
             } else {
-                hi = mid; // Apogee below target; reduced drag required, so decrease fin height
+                hi = mid;
             }
         }
         return mid;
     }
 
-    /** Bisection solve on ballast mass; total flight time decreases monotonically as ballast mass (descent rate) increases. */
     private static double solveBallastForFlightTime(SimRunner runner, RocketComponents.BallastControl ballast, TrapezoidFinSet finSet,
                                                       double finHeightM, double fixedSweepM,
                                                       RocketComponents.ParachuteHoleControl hole, double holeRadiusM,
@@ -560,20 +415,14 @@ public class DesignSolver {
             }
             if (r.flightTimeS >= targetTimeMinS && r.flightTimeS <= targetTimeMaxS) break;
             if (r.flightTimeS > targetMid) {
-                lo = mid; // Flight time exceeds target; increased mass required for faster descent
+                lo = mid;
             } else {
-                hi = mid; // Flight time below target; reduced mass required for slower descent
+                hi = mid;
             }
         }
         return mid;
     }
 
-    /**
-     * Bisection solve on parachute center-hole radius; flight time decreases monotonically as
-     * hole radius increases (reduced canopy area, reduced drag, faster descent). Solved last in
-     * each outer round as a second, independent flight-time trim, applicable when ballast alone
-     * has saturated at a search bound and the flight-time target remains unmet.
-     */
     private static double solveHoleRadiusForFlightTime(SimRunner runner, RocketComponents.BallastControl ballast, double ballastKg,
                                                          TrapezoidFinSet finSet, double finHeightM, double fixedSweepM,
                                                          RocketComponents.ParachuteHoleControl hole, EnvironmentPoint env,
@@ -597,9 +446,9 @@ public class DesignSolver {
             }
             if (r.flightTimeS >= targetTimeMinS && r.flightTimeS <= targetTimeMaxS) break;
             if (r.flightTimeS > targetMid) {
-                lo = mid; // Flight time exceeds target; larger hole radius required for faster descent
+                lo = mid;
             } else {
-                hi = mid; // Flight time below target; smaller hole radius required for slower descent
+                hi = mid;
             }
         }
         return mid;
@@ -609,14 +458,12 @@ public class DesignSolver {
         return Math.max(lo, Math.min(hi, v));
     }
 
-    /** Normalized combined error, placing apogee (meters) and flight time (seconds) on a directly comparable scale. */
     private static double combinedError(double apogeeM, double flightTimeS, double targetApogeeM, double targetTimeCenterS) {
         double apogeeErrNorm = Math.abs(apogeeM - targetApogeeM) / Math.max(APOGEE_TOLERANCE_M, 1e-9);
         double timeErrNorm = Math.abs(flightTimeS - targetTimeCenterS) / Math.max(TIME_TOLERANCE_S, 1e-9);
         return apogeeErrNorm + timeErrNorm;
     }
 
-    /** One simulated design point: the raw flight result and its combined error (positive infinity if the simulation failed). */
     private static final class Eval {
         final SimRunner.FlightResult result;
         final double err;
@@ -627,7 +474,6 @@ public class DesignSolver {
         }
     }
 
-    /** Applies ballast, fin height, and hole radius (sweep always restored to its fixed value), executes one simulation, and scores the result. */
     private static Eval evaluate(SimRunner runner, RocketComponents.BallastControl ballast, double ballastKg,
                                   TrapezoidFinSet finSet, double finHeightM, double fixedSweepM,
                                   RocketComponents.ParachuteHoleControl hole, double holeRadiusM,
@@ -646,12 +492,6 @@ public class DesignSolver {
                 ballastKg * 1000, finHeightM, holeRadiusM / IN_TO_M, patternSearch ? "pattern search" : "bisection", pass + 1);
     }
 
-    /**
-     * Tracks the best (lowest combined-error) design point found across both the bisection and
-     * pattern-search phases, and pushes every candidate through the live leaderboard. Maintained
-     * as a single running incumbent so the pattern-search phase always explores outward from the
-     * true global best, regardless of which phase identified it.
-     */
     private static final class BestTracker {
         private final TopNLeaderboard leaderboard;
         private final LeaderboardListener leaderboardListener;
@@ -668,7 +508,6 @@ public class DesignSolver {
             this.leaderboardListener = leaderboardListener;
         }
 
-        /** Pushes all valid candidates to the leaderboard; returns true only if this candidate is a new global best. */
         boolean offer(Eval eval, double ballastKg, double finHeightM, double holeRadiusM, String detail) {
             if (!eval.result.ok) return false;
             if (leaderboard.offer(eval.err, eval.result.apogeeM, eval.result.flightTimeS, detail)) {
@@ -686,3 +525,4 @@ public class DesignSolver {
         }
     }
 }
+

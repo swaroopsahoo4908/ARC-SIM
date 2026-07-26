@@ -4,35 +4,8 @@ import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 
-/**
- * Minimal dependency-free Parquet reader/writer.
- *
- * Rationale for a custom implementation rather than org.apache.parquet + Hadoop: the reference
- * parquet-mr library requires a substantial portion of the Hadoop stack (Configuration/Path/
- * FileSystem plumbing) to write a local file, increasing shaded-jar size and risking classpath
- * and META-INF service-file conflicts with other bundled dependencies (OpenRocket core, POI).
- * This implementation covers the subset of the Parquet file format required for spec-compliant
- * output: flat (non-nested) columns, all REQUIRED (non-null), PLAIN encoding only, UNCOMPRESSED
- * codec only. Files produced are readable by pandas, pyarrow, DuckDB, and Excel-via-plugin
- * without any third-party dependency. Supported column types: DOUBLE, BOOLEAN, STRING (UTF8 byte
- * array).
- *
- * Format reference (https://parquet.apache.org/docs/file-format/): a Parquet file consists of
- * MAGIC("PAR1") + column-chunk data (page header + raw values, per row group) + a Thrift
- * "compact protocol"-encoded footer (FileMetaData) + 4-byte little-endian footer length +
- * MAGIC("PAR1"). Row-group data and footer are written using a purpose-built Thrift
- * compact-protocol encoder/decoder (TCompactWriter/TCompactReader below); this protocol
- * (varint + zigzag integers, delta-encoded field ids) is the only wire-format complexity
- * required for Parquet footers.
- *
- * Unsupported by design, to bound implementation scope: nested/repeated columns, null values,
- * dictionary or RLE-dictionary encoding, and any compression codec other than none. Reading a
- * file that uses an unsupported feature raises UnsupportedOperationException rather than
- * producing incorrect data.
- */
 public class MiniParquet {
 
-    // Parquet physical type codes (subset)
     private static final int PTYPE_BOOLEAN = 0;
     private static final int PTYPE_DOUBLE = 5;
     private static final int PTYPE_BYTE_ARRAY = 6;
@@ -52,20 +25,15 @@ public class MiniParquet {
         public Column(String name, ColType type) { this.name = name; this.type = type; }
     }
 
-    // =====================================================================================
-    // Writer
-    // =====================================================================================
-
     public static class Writer implements Closeable {
         private final List<Column> columns;
         private final int rowGroupSize;
         private final CountingOutputStream out;
-        private final List<List<Object>> buffer; // column-major row buffer; one list per column
+        private final List<List<Object>> buffer;
         private final List<RowGroupInfo> rowGroups = new ArrayList<>();
         private long totalRows = 0;
         private boolean closed = false;
 
-        /** rowGroupSize bounds the number of buffered rows flushed to disk per row group (memory ceiling). */
         public Writer(File file, List<Column> columns, int rowGroupSize) throws IOException {
             this.columns = columns;
             this.rowGroupSize = Math.max(1, rowGroupSize);
@@ -75,7 +43,6 @@ public class MiniParquet {
             out.write("PAR1".getBytes(StandardCharsets.US_ASCII));
         }
 
-        /** values.length must equal columns.size(), in column order; each element typed Double/Boolean/String per column type. */
         public void writeRow(Object[] values) throws IOException {
             if (values.length != columns.size()) {
                 throw new IllegalArgumentException("Expected " + columns.size() + " values, got " + values.length);
@@ -193,11 +160,11 @@ public class MiniParquet {
         private static void writeFileMetaData(TCompactWriter w, List<Column> columns, long numRows,
                                                List<RowGroupInfo> rowGroups) throws IOException {
             w.writeStructBegin();
-            w.writeFieldBeginI32((short) 1); w.writeZigZagVarint(1); // format version
+            w.writeFieldBeginI32((short) 1); w.writeZigZagVarint(1);
 
             w.writeFieldBeginList((short) 2);
             w.writeListBegin(TCompactWriter.T_STRUCT, columns.size() + 1);
-            // Synthetic root schema element
+
             writeSchemaElement(w, "schema", null, null, columns.size(), null);
             for (Column c : columns) {
                 Integer converted = (c.type == ColType.STRING) ? CONVERTED_TYPE_UTF8 : null;
@@ -302,21 +269,16 @@ public class MiniParquet {
         long count() { return count; }
     }
 
-    // =====================================================================================
-    // Reader
-    // =====================================================================================
-
     public static final class ReadResult {
         public final List<String> columnNames;
         public final List<ColType> columnTypes;
-        public final List<Object[]> rows; // row-major layout
+        public final List<Object[]> rows;
 
         ReadResult(List<String> columnNames, List<ColType> columnTypes, List<Object[]> rows) {
             this.columnNames = columnNames; this.columnTypes = columnTypes; this.rows = rows;
         }
     }
 
-    /** Reads up to maxRows rows (Integer.MAX_VALUE reads all rows). Column order matches the file schema order. */
     public static ReadResult read(File file, long maxRows) throws IOException {
         try (RandomAccessFile raf = new RandomAccessFile(file, "r")) {
             long length = raf.length();
@@ -372,7 +334,6 @@ public class MiniParquet {
         }
     }
 
-    /** Returns the total row count from the footer metadata, without reading any data pages. */
     public static long countRows(File file) throws IOException {
         try (RandomAccessFile raf = new RandomAccessFile(file, "r")) {
             long length = raf.length();
@@ -458,10 +419,10 @@ public class MiniParquet {
             TCompactReader.FieldHeader f = r.readFieldBegin();
             if (f.type == TCompactReader.T_STOP) break;
             switch (f.id) {
-                case 1: r.readZigZagVarintAsSkip(f.type); break; // page type
+                case 1: r.readZigZagVarintAsSkip(f.type); break;
                 case 2: info.uncompressedSize = (int) r.readZigZagVarintForType(f.type); break;
                 case 3: info.compressedSize = (int) r.readZigZagVarintForType(f.type); break;
-                case 5: { // data_page_header struct
+                case 5: {
                     r.readStructBegin();
                     while (true) {
                         TCompactReader.FieldHeader f2 = r.readFieldBegin();
@@ -490,7 +451,7 @@ public class MiniParquet {
         List<ColumnChunkMeta> columns = new ArrayList<>(); long numRows;
     }
     private static final class FileMetaData {
-        List<SchemaElem> columns = new ArrayList<>(); // root excluded
+        List<SchemaElem> columns = new ArrayList<>();
         long numRows;
         List<RowGroupMeta> rowGroups = new ArrayList<>();
     }
@@ -502,16 +463,16 @@ public class MiniParquet {
             TCompactReader.FieldHeader f = r.readFieldBegin();
             if (f.type == TCompactReader.T_STOP) break;
             switch (f.id) {
-                case 2: { // schema list
+                case 2: {
                     TCompactReader.ListHeader lh = r.readListBegin();
                     List<SchemaElem> all = new ArrayList<>();
                     for (int i = 0; i < lh.size; i++) all.add(parseSchemaElement(r));
-                    // First element is the synthetic root node; remaining elements are actual columns.
+
                     if (!all.isEmpty()) meta.columns.addAll(all.subList(1, all.size()));
                     break;
                 }
                 case 3: meta.numRows = r.readZigZagVarintForType(f.type); break;
-                case 4: { // row_groups list
+                case 4: {
                     TCompactReader.ListHeader lh = r.readListBegin();
                     for (int i = 0; i < lh.size; i++) meta.rowGroups.add(parseRowGroup(r));
                     break;
@@ -567,14 +528,14 @@ public class MiniParquet {
             TCompactReader.FieldHeader f = r.readFieldBegin();
             if (f.type == TCompactReader.T_STOP) break;
             switch (f.id) {
-                case 3: { // meta_data struct
+                case 3: {
                     r.readStructBegin();
                     while (true) {
                         TCompactReader.FieldHeader f2 = r.readFieldBegin();
                         if (f2.type == TCompactReader.T_STOP) break;
                         switch (f2.id) {
                             case 1: cc.parquetType = (int) r.readZigZagVarintForType(f2.type); break;
-                            case 3: { // path_in_schema list<string>
+                            case 3: {
                                 TCompactReader.ListHeader lh = r.readListBegin();
                                 String last = null;
                                 for (int i = 0; i < lh.size; i++) last = r.readStringForType(lh.elemType);
@@ -596,17 +557,12 @@ public class MiniParquet {
         return cc;
     }
 
-    /** Adapts RandomAccessFile to a sequential InputStream; the Thrift compact-protocol reader only reads forward. */
     private static final class RafInputStream extends InputStream {
         private final RandomAccessFile raf;
         RafInputStream(RandomAccessFile raf) { this.raf = raf; }
         @Override public int read() throws IOException { return raf.read(); }
         @Override public int read(byte[] b, int off, int len) throws IOException { return raf.read(b, off, len); }
     }
-
-    // =====================================================================================
-    // Minimal Thrift TCompactProtocol writer/reader, scoped to Parquet footer/page requirements
-    // =====================================================================================
 
     private static final class TCompactWriter {
         static final int T_BOOLEAN_TRUE = 1, T_BOOLEAN_FALSE = 2, T_I16 = 4, T_I32 = 5, T_I64 = 6,
@@ -728,7 +684,6 @@ public class MiniParquet {
             return (n >>> 1) ^ -(n & 1);
         }
 
-        /** Applies to fields whose compact type already identifies them as an integer (I16/I32/I64); wire encoding is identical across these types. */
         long readZigZagVarintForType(int type) throws IOException {
             return readZigZagVarint();
         }
@@ -747,12 +702,11 @@ public class MiniParquet {
             return new String(buf, StandardCharsets.UTF_8);
         }
 
-        /** Generic skip for unhandled fields; required for robust decoding of arbitrary Parquet files. */
         void skip(int type) throws IOException {
             switch (type) {
                 case T_BOOLEAN_TRUE:
                 case T_BOOLEAN_FALSE:
-                    break; // value is encoded in the type nibble itself, nothing more to read
+                    break;
                 case T_I16:
                 case T_I32:
                 case T_I64:
@@ -772,7 +726,7 @@ public class MiniParquet {
                 }
                 case T_MAP: {
                     int b = readByte();
-                    if (b == 0) break; // empty map, no kv types byte
+                    if (b == 0) break;
                     int size = (int) readVarint();
                     int kType = (b >> 4) & 0x0F, vType = b & 0x0F;
                     for (int i = 0; i < size; i++) { skip(kType); skip(vType); }
@@ -794,3 +748,4 @@ public class MiniParquet {
         }
     }
 }
+

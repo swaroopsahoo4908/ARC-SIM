@@ -6,7 +6,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 
-/** Single swept variable definition: minimum, maximum, and step size, with the maximum inclusive. */
 public class GridAxis {
     public final double min, max, step;
 
@@ -70,3 +69,4 @@ public class GridAxis {
         return new GridAxis(min, max, step);
     }
 }
+

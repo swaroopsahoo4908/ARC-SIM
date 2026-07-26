@@ -5,15 +5,6 @@ import info.openrocket.core.rocketcomponent.*;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Introspects a rocket component tree generically so Engine 3 operates on any .ork file
- * structure (single-stage, multi-stage, or otherwise), without assuming a specific layout.
- *
- * Rather than inferring a single canonical MassComponent/Parachute/FinSet, an approach that
- * fails when a rocket has both drogue and main chutes, fins on multiple stages, or ballast in an
- * unexpected location, this class enumerates every candidate with a human-readable label and a
- * best-guess default, deferring final selection to the caller (GUI or CLI).
- */
 public class RocketInspector {
 
     public static class Item<T> {
@@ -44,7 +35,6 @@ public class RocketInspector {
         return result;
     }
 
-    /** Best-guess default: the mass component in the lowest (aft-most) body tube of the last stage. */
     public static MassComponent suggestBallastDefault(Rocket rocket) {
         try {
             List<RocketComponent> topLevel = rocket.getChildren();
@@ -61,11 +51,10 @@ public class RocketInspector {
             }
             return found;
         } catch (Exception e) {
-            return null; // Caller must handle a null result (no default available; requires manual selection).
+            return null;
         }
     }
 
-    /** Best-guess default: the largest-diameter parachute, since main canopies are typically larger than drogues. */
     public static Parachute suggestMainParachuteDefault(List<Item<Parachute>> parachutes) {
         Parachute best = null;
         double bestDia = -1;
@@ -77,13 +66,12 @@ public class RocketInspector {
                     best = p.component;
                 }
             } catch (Exception ignored) {
-                // Skip components whose diameter cannot be read.
+
             }
         }
         return best;
     }
 
-    /** Best-guess default: the last (aft-most) trapezoidal fin set found, typically the booster or sustainer fins. */
     public static TrapezoidFinSet suggestFinSetDefault(List<Item<TrapezoidFinSet>> finSets) {
         return finSets.isEmpty() ? null : finSets.get(finSets.size() - 1).component;
     }
@@ -123,8 +111,9 @@ public class RocketInspector {
                 return String.format("h=%.3f m", f.getHeight());
             }
         } catch (Exception ignored) {
-            // Best-effort only; if an accessor fails, omit the supplementary detail.
+
         }
         return "";
     }
 }
+

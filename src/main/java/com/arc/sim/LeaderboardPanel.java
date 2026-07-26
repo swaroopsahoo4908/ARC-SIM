@@ -5,12 +5,6 @@ import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.util.List;
 
-/**
- * Live top-N table displayed for Engine 1/Engine 2 (most-favorable-conditions results) and
- * Engine 3 (closest-simulation-to-target results). A pure display component; ranking logic
- * resides in TopNLeaderboard, executed on the background job thread. This panel repaints on
- * receipt of each new snapshot.
- */
 public class LeaderboardPanel extends JPanel {
     private final DefaultTableModel model;
     private final JTable table;
@@ -38,7 +32,6 @@ public class LeaderboardPanel extends JPanel {
         add(scroll, BorderLayout.CENTER);
     }
 
-    /** Safe to invoke from any thread; internally dispatches to the EDT. */
     public void update(List<LeaderboardRow> rows) {
         SwingUtilities.invokeLater(() -> {
             model.setRowCount(0);
@@ -58,3 +51,4 @@ public class LeaderboardPanel extends JPanel {
         SwingUtilities.invokeLater(() -> model.setRowCount(0));
     }
 }
+

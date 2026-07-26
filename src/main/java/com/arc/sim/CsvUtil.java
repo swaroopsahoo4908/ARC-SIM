@@ -5,12 +5,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Minimal dependency-free CSV utility, RFC4180-compliant: fields containing a comma, quote, or
- * newline are wrapped in double quotes, with embedded quotes doubled ("" ). Requires no external
- * library for either direction, writing manifests/summaries or reading them back in the Data
- * Viewer.
- */
 public class CsvUtil {
 
     public static String escape(String value) {
@@ -36,7 +30,6 @@ public class CsvUtil {
         Table(List<String> header, List<List<String>> rows) { this.header = header; this.rows = rows; }
     }
 
-    /** Reads an entire CSV file into memory; the first row is treated as the header. */
     public static Table read(File file) throws IOException {
         List<List<String>> allRows = new ArrayList<>();
         try (Reader r = new InputStreamReader(new FileInputStream(file), StandardCharsets.UTF_8)) {
@@ -61,7 +54,7 @@ public class CsvUtil {
                             ch = (char) next;
                             if (ch == ',') { current.add(field.toString()); field.setLength(0); }
                             else if (ch == '\n') { if (field.length() > 0 || !current.isEmpty()) { current.add(field.toString()); field.setLength(0); allRows.add(current); current = new ArrayList<>(); } }
-                            else if (ch == '\r') { /* wait for following \n */ }
+                            else if (ch == '\r') {  }
                             else field.append(ch);
                         }
                     } else {
@@ -105,3 +98,4 @@ public class CsvUtil {
         return new Table(header, dataRows);
     }
 }
+

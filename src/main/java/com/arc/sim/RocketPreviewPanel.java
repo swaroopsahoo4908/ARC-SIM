@@ -5,7 +5,6 @@ import java.awt.*;
 import java.awt.geom.GeneralPath;
 import java.util.List;
 
-/** Renders a RocketGeometryExtractor.Geometry as a simplified 2D side-profile schematic. */
 public class RocketPreviewPanel extends JPanel {
 
     private RocketGeometryExtractor.Geometry geometry;
@@ -36,7 +35,7 @@ public class RocketPreviewPanel extends JPanel {
         int h = getHeight() - 2 * margin;
         if (w <= 10 || h <= 10) return;
 
-        double maxDim = Math.max(geometry.totalLength, geometry.maxRadius * 2 * 1.6); // Reserves margin for fin extent beyond the body radius.
+        double maxDim = Math.max(geometry.totalLength, geometry.maxRadius * 2 * 1.6);
         double scale = Math.min(w / geometry.totalLength, h / (geometry.maxRadius * 2 * 2.2));
         int centerY = getHeight() / 2;
 
@@ -44,11 +43,6 @@ public class RocketPreviewPanel extends JPanel {
         g.setStroke(new BasicStroke(1.5f));
         g.setFont(g.getFont().deriveFont(11f));
 
-        // Body components: rendered from the sampled radius profile (curved for ogive/ellipsoid/
-        // power-series/parabolic/Haack nose cones and transitions, straight for conical/tube
-        // shapes), top half only, mirrored for the bottom half to produce a symmetric side
-        // profile. Direct profile sampling avoids the cone approximation produced by connecting
-        // only the fore/aft endpoints with a straight line.
         for (RocketGeometryExtractor.BodyShape s : geometry.bodies) {
             double[] profile = s.profileR;
             int stations = profile.length;
@@ -63,8 +57,7 @@ public class RocketPreviewPanel extends JPanel {
                 if (i == 0) { top.moveTo(x, rTop); bottom.moveTo(x, rBot); }
                 else { top.lineTo(x, rTop); bottom.lineTo(x, rBot); }
             }
-            // Combines top and bottom profiles into a single closed outline: top profile
-            // left-to-right, then bottom profile right-to-left, returning to the start point.
+
             GeneralPath path = new GeneralPath(top);
             for (int i = stations - 1; i >= 0; i--) {
                 int x = margin + (int) ((s.xStart + i * dx) * scale);
@@ -79,9 +72,6 @@ public class RocketPreviewPanel extends JPanel {
             g.draw(path);
         }
 
-        // Fins: rendered above and below the body tube. The 2D side view represents both sides of
-        // a 4-fin rocket as two projected fins; for 3-fin rockets this introduces minor
-        // over-drawing, an accepted simplification for a rapid visual check.
         for (RocketGeometryExtractor.FinShape f : geometry.fins) {
             int rootX1 = margin + (int) (f.xStart * scale);
             int rootX2 = margin + (int) ((f.xStart + f.rootChord) * scale);
@@ -128,3 +118,4 @@ public class RocketPreviewPanel extends JPanel {
         }
     }
 }
+

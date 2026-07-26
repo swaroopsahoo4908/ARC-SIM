@@ -1,11 +1,5 @@
 package com.arc.sim;
 
-/**
- * Streaming mean/variance computation via Welford's algorithm, with streaming covariance for
- * Pearson correlation. Enables FullFactorialSweep to compute summary statistics over datasets of
- * hundreds of millions of rows without retaining them in memory. Not thread-safe; must be fed from
- * a single consumer thread.
- */
 public class RunningStats {
     private long n = 0;
     private double mean = 0;
@@ -24,7 +18,6 @@ public class RunningStats {
     public double stddev() { return Math.sqrt(variance()); }
     public long count() { return n; }
 
-    /** Streaming Pearson correlation between two paired data streams; invoke addPair once per row. */
     public static class Correlation {
         private long n = 0;
         private double meanX = 0, meanY = 0, c = 0, m2x = 0, m2y = 0;
@@ -47,3 +40,4 @@ public class RunningStats {
         }
     }
 }
+
