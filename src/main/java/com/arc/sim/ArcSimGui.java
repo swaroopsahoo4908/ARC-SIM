@@ -134,8 +134,11 @@ public class ArcSimGui extends JFrame {
         AxisFields rodAngleAxis = new AxisFields("rodAngle", 0, 6, 3, 0.5);
         AxisFields[] axes = {windAvgAxis, windStdDevAxis, turbulenceAxis, windDirAxis, tempAxis, pressureAxis, rodAngleAxis};
 
+        MultiSiteSelector siteSelector = new MultiSiteSelector();
+
         FormBuilder form = new FormBuilder();
         form.addFileRow("Rocket (.ork) file:", orkField, true, "OpenRocket files (*.ork)", "ork");
+        form.addRow("Launch sites (swept over all checked):", siteSelector);
 
         FormBuilder axisForm = new FormBuilder();
         axisForm.addAxisRow("Wind avg (m/s):", windAvgAxis.min, windAvgAxis.max, windAvgAxis.count);
@@ -167,7 +170,8 @@ public class ArcSimGui extends JFrame {
                 tempAxis.loadFrom(cfg.temp);
                 pressureAxis.loadFrom(cfg.pressure);
                 rodAngleAxis.loadFrom(cfg.rodAngle);
-                appendLog("Loaded grid ranges from " + configFile.getName() + ".\n");
+                siteSelector.setSelectedSites(cfg.sites);
+                appendLog("Loaded grid ranges and sites from " + configFile.getName() + ".\n");
             } catch (Exception ex) {
                 JOptionPane.showMessageDialog(this, "Could not load config: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
             }
@@ -176,8 +180,8 @@ public class ArcSimGui extends JFrame {
         saveRangesButton.addActionListener(e -> {
             File configFile = new File(configField.getText().trim());
             try {
-                saveAxisRangesToConfig(configFile, axes);
-                appendLog("Saved grid ranges to " + configFile.getName() + ".\n");
+                saveAxisRangesToConfig(configFile, axes, siteSelector.getSelectedSiteSpecs());
+                appendLog("Saved grid ranges and sites to " + configFile.getName() + ".\n");
             } catch (Exception ex) {
                 JOptionPane.showMessageDialog(this, "Could not save config: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
             }
@@ -191,10 +195,11 @@ public class ArcSimGui extends JFrame {
                 "~1,048,576-row-per-sheet limit; open it in the Data Viewer tab, or pandas/DuckDB/Excel-with-a-plugin. " +
                 "A companion &lt;...&gt;_summary.csv (success rate + correlations) is written alongside it."));
         form.addRow("", forceBox);
-        form.addRow("", hintLabel("Sites, the safety cap, and thread count are set inside the config file " +
-                "(comma-separated: MDRA_SOD_FARM, SPAAR_LANCASTER, or CUSTOM:lat|lon|alt) -- click " +
-                "\"Edit sites/safety cap...\" to change them. The ranges above always take priority over the " +
-                "file's ranges when you run or preview."));
+        form.addRow("", hintLabel("Check any combination of sites above (Custom uses the lat/lon/alt fields, " +
+                "\"Use Current Location\" fills them in for you) -- each checked site is swept as its own axis. " +
+                "The safety cap and thread count are still set inside the config file -- click " +
+                "\"Edit sites/safety cap...\" to change them. The ranges and sites above always take priority " +
+                "over the file's when you run or preview."));
 
         LeaderboardPanel leaderboardPanel = new LeaderboardPanel(
                 "Most favorable conditions seen so far (live, closest to apogee/time target)", "Error score");
@@ -206,8 +211,12 @@ public class ArcSimGui extends JFrame {
         previewButton.addActionListener(e -> {
             File configFile = requireExistingFile(configField, "grid config .properties file");
             if (configFile == null) return;
+            if (siteSelector.getSelectedSites().isEmpty()) {
+                JOptionPane.showMessageDialog(this, "Check at least one launch site.", "No sites selected", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
             runJob("Preview grid size", listener -> {
-                GridAxis.SweepConfig cfg = buildSweepConfig(configFile, axes);
+                GridAxis.SweepConfig cfg = buildSweepConfig(configFile, axes, siteSelector.getSelectedSites());
                 long total = cfg.totalCombos();
                 double estSec = total * 0.03;
                 System.out.printf("Grid total: %,d combinations%n", total);
@@ -225,12 +234,16 @@ public class ArcSimGui extends JFrame {
             if (ork == null) return;
             File configFile = requireExistingFile(configField, "grid config .properties file");
             if (configFile == null) return;
+            if (siteSelector.getSelectedSites().isEmpty()) {
+                JOptionPane.showMessageDialog(this, "Check at least one launch site.", "No sites selected", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
             File outDir = resolveOutDir(outDirField, ork, OutputNaming.FULL_FACTORIAL_FOLDER);
             boolean force = forceBox.isSelected();
 
             leaderboardPanel.clear();
             runJob("Engine 1: Full Factorial Sweep", listener -> {
-                GridAxis.SweepConfig cfg = buildSweepConfig(configFile, axes);
+                GridAxis.SweepConfig cfg = buildSweepConfig(configFile, axes, siteSelector.getSelectedSites());
                 File out = FullFactorialSweep.run(ork, cfg, outDir, force, listener, leaderboardPanel::update);
                 if (out != null) openFileLocation(out);
             });
@@ -242,7 +255,7 @@ public class ArcSimGui extends JFrame {
         return withPadding(panel);
     }
 
-    private static GridAxis.SweepConfig buildSweepConfig(File configFile, AxisFields[] axes) throws Exception {
+    private static GridAxis.SweepConfig buildSweepConfig(File configFile, AxisFields[] axes, List<LaunchSite> sites) throws Exception {
         GridAxis.SweepConfig cfg = GridAxis.load(configFile);
         cfg.windAvg = axes[0].toGridAxis();
         cfg.windStdDev = axes[1].toGridAxis();
@@ -251,10 +264,11 @@ public class ArcSimGui extends JFrame {
         cfg.temp = axes[4].toGridAxis();
         cfg.pressure = axes[5].toGridAxis();
         cfg.rodAngle = axes[6].toGridAxis();
+        cfg.sites = sites;
         return cfg;
     }
 
-    private static void saveAxisRangesToConfig(File configFile, AxisFields[] axes) throws Exception {
+    private static void saveAxisRangesToConfig(File configFile, AxisFields[] axes, List<String> siteSpecs) throws Exception {
         java.util.Properties p = new java.util.Properties();
         if (configFile.exists()) {
             try (java.io.FileInputStream in = new java.io.FileInputStream(configFile)) {
@@ -267,7 +281,7 @@ public class ArcSimGui extends JFrame {
             p.setProperty(a.propKey + ".max", String.valueOf(g.max));
             p.setProperty(a.propKey + ".step", String.valueOf(g.step));
         }
-        p.setProperty("sites", p.getProperty("sites", "MDRA_SOD_FARM,SPAAR_LANCASTER"));
+        p.setProperty("sites", String.join(",", siteSpecs));
         p.setProperty("maxCombosSafety", p.getProperty("maxCombosSafety", "50000000"));
         p.setProperty("threads", p.getProperty("threads", String.valueOf(Runtime.getRuntime().availableProcessors())));
         try (java.io.FileOutputStream out = new java.io.FileOutputStream(configFile)) {
@@ -917,6 +931,129 @@ public class ArcSimGui extends JFrame {
                 case 1: return LaunchSite.SPAAR_LANCASTER;
                 default: return LaunchSite.custom((Double) latSpinner.getValue(), (Double) lonSpinner.getValue(), (Double) altSpinner.getValue());
             }
+        }
+    }
+
+    private class MultiSiteSelector extends JPanel {
+        private final JCheckBox mdraBox;
+        private final JCheckBox spaarBox;
+        private final JCheckBox customBox;
+        private final JSpinner latSpinner;
+        private final JSpinner lonSpinner;
+        private final JSpinner altSpinner;
+        private final JButton locateButton;
+
+        MultiSiteSelector() {
+            super(new FlowLayout(FlowLayout.LEFT, 6, 0));
+            mdraBox = new JCheckBox(LaunchSite.MDRA_SOD_FARM.label, true);
+            spaarBox = new JCheckBox(LaunchSite.SPAAR_LANCASTER.label, true);
+            customBox = new JCheckBox("Custom...", false);
+            latSpinner = new JSpinner(new SpinnerNumberModel(39.0, -90.0, 90.0, 0.0001));
+            lonSpinner = new JSpinner(new SpinnerNumberModel(-76.1, -180.0, 180.0, 0.0001));
+            altSpinner = new JSpinner(new SpinnerNumberModel(100.0, -500.0, 10000.0, 1.0));
+            ((JSpinner.NumberEditor) latSpinner.getEditor()).getFormat().setMaximumFractionDigits(5);
+            ((JSpinner.NumberEditor) lonSpinner.getEditor()).getFormat().setMaximumFractionDigits(5);
+            latSpinner.setPreferredSize(new Dimension(90, latSpinner.getPreferredSize().height));
+            lonSpinner.setPreferredSize(new Dimension(90, lonSpinner.getPreferredSize().height));
+            altSpinner.setPreferredSize(new Dimension(70, altSpinner.getPreferredSize().height));
+            locateButton = new JButton("Use Current Location");
+            locateButton.setToolTipText("Resolve this machine's current position (on-device fix if available, "
+                    + "otherwise an IP-geolocation approximation), check Custom, and fill it in.");
+
+            setCustomFieldsEnabled(false);
+            customBox.addActionListener(e -> setCustomFieldsEnabled(customBox.isSelected()));
+            locateButton.addActionListener(e -> onLocateCurrentPosition());
+
+            add(mdraBox);
+            add(spaarBox);
+            add(customBox);
+            add(new JLabel("lat:"));
+            add(latSpinner);
+            add(new JLabel("lon:"));
+            add(lonSpinner);
+            add(new JLabel("alt(m):"));
+            add(altSpinner);
+            add(locateButton);
+        }
+
+        private void onLocateCurrentPosition() {
+            locateButton.setEnabled(false);
+            locateButton.setText("Locating...");
+            new SwingWorker<DeviceLocation.Reading, Void>() {
+                @Override
+                protected DeviceLocation.Reading doInBackground() throws Exception {
+                    return DeviceLocation.fetch(weatherApiKey());
+                }
+
+                @Override
+                protected void done() {
+                    locateButton.setEnabled(true);
+                    locateButton.setText("Use Current Location");
+                    try {
+                        DeviceLocation.Reading r = get();
+                        customBox.setSelected(true);
+                        setCustomFieldsEnabled(true);
+                        latSpinner.setValue(r.latitudeDeg);
+                        lonSpinner.setValue(r.longitudeDeg);
+                        altSpinner.setValue(r.altitudeM);
+                        System.out.printf("Current location resolved via %s: %.5f, %.5f, %.0f m%n",
+                                r.source, r.latitudeDeg, r.longitudeDeg, r.altitudeM);
+                        System.out.println(r.accuracyNote);
+                    } catch (Exception ex) {
+                        Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
+                        System.err.println("Could not resolve current location: " + cause.getMessage());
+                        JOptionPane.showMessageDialog(MultiSiteSelector.this,
+                                "Could not resolve current location:\n" + cause.getMessage(),
+                                "Location unavailable", JOptionPane.WARNING_MESSAGE);
+                    }
+                }
+            }.execute();
+        }
+
+        private void setCustomFieldsEnabled(boolean enabled) {
+            latSpinner.setEnabled(enabled);
+            lonSpinner.setEnabled(enabled);
+            altSpinner.setEnabled(enabled);
+        }
+
+        List<LaunchSite> getSelectedSites() {
+            List<LaunchSite> sites = new java.util.ArrayList<>();
+            if (mdraBox.isSelected()) sites.add(LaunchSite.MDRA_SOD_FARM);
+            if (spaarBox.isSelected()) sites.add(LaunchSite.SPAAR_LANCASTER);
+            if (customBox.isSelected()) {
+                sites.add(LaunchSite.custom((Double) latSpinner.getValue(), (Double) lonSpinner.getValue(), (Double) altSpinner.getValue()));
+            }
+            return sites;
+        }
+
+        void setSelectedSites(List<LaunchSite> sites) {
+            mdraBox.setSelected(false);
+            spaarBox.setSelected(false);
+            customBox.setSelected(false);
+            setCustomFieldsEnabled(false);
+            for (LaunchSite site : sites) {
+                if (site.latitudeDeg == LaunchSite.MDRA_SOD_FARM.latitudeDeg && site.longitudeDeg == LaunchSite.MDRA_SOD_FARM.longitudeDeg) {
+                    mdraBox.setSelected(true);
+                } else if (site.latitudeDeg == LaunchSite.SPAAR_LANCASTER.latitudeDeg && site.longitudeDeg == LaunchSite.SPAAR_LANCASTER.longitudeDeg) {
+                    spaarBox.setSelected(true);
+                } else {
+                    customBox.setSelected(true);
+                    setCustomFieldsEnabled(true);
+                    latSpinner.setValue(site.latitudeDeg);
+                    lonSpinner.setValue(site.longitudeDeg);
+                    altSpinner.setValue(site.altitudeM);
+                }
+            }
+        }
+
+        List<String> getSelectedSiteSpecs() {
+            List<String> specs = new java.util.ArrayList<>();
+            if (mdraBox.isSelected()) specs.add("MDRA_SOD_FARM");
+            if (spaarBox.isSelected()) specs.add("SPAAR_LANCASTER");
+            if (customBox.isSelected()) {
+                specs.add(String.format("CUSTOM:%s|%s|%s", latSpinner.getValue(), lonSpinner.getValue(), altSpinner.getValue()));
+            }
+            return specs;
         }
     }
 

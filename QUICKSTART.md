@@ -61,13 +61,16 @@ Arc-Sim opens with one tab per engine, plus a Data Viewer tab. Each engine tab h
 a *Run* button, a progress bar, and a live log at the bottom of the window.
 
 1. *Engine 1 -- Full Factorial Sweep*: point it at a `.ork` rocket file and exhaustively tests
-   every combination of wind, temperature, pressure, and launch angle in a grid, producing a full
-   results table (`.parquet` + a `.csv` summary). Each swept parameter has its own row in the tab:
-   *range1* to *range2* at *step count*, editable right in the GUI -- no need to hand-edit a config
-   file. Sites, the safety cap, and thread count still live in `sweep_grid.properties` (click
-   "Edit sites/safety cap..."); "Load ranges from file" / "Save ranges to file" sync the on-screen
-   ranges with that file if you want to reuse a grid later. Use the *Preview combination count &
-   time estimate* button first -- it tells you how long a run will take before you commit to it.
+   every combination of wind, temperature, pressure, launch angle, and launch site in a grid,
+   producing a full results table (`.parquet` + a `.csv` summary). Each swept parameter has its
+   own row in the tab: *range1* to *range2* at *step count*, editable right in the GUI -- no need
+   to hand-edit a config file. Sites use the same picker as Engines 2/4 (check any combination of
+   the two presets and/or Custom lat/lon/alt, with a "Use Current Location" button) -- every
+   checked site is swept as its own axis. The safety cap and thread count still live in
+   `sweep_grid.properties` (click "Edit sites/safety cap..."); "Load ranges from file" / "Save
+   ranges to file" sync the on-screen ranges and sites with that file if you want to reuse a grid
+   later. Use the *Preview combination count & time estimate* button first -- it tells you how
+   long a run will take before you commit to it.
 2. *Engine 2 -- Design Solver*: give it a target apogee and flight-time window plus one fixed set
    of conditions, and it solves for ballast weight, fin height, and parachute spill-hole size to
    hit those targets, saving a new `.ork` file with the solved design.
