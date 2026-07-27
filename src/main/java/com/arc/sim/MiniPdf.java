@@ -7,18 +7,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * A dependency-free writer for simple, single-column text PDF reports (title + plain lines, auto-paginated).
- * No external PDF library is on this project's classpath (see MiniParquet/MiniJson for the same philosophy
- * applied to Parquet/JSON) -- PDF's core structure is plain enough for this to be a reasonable hand roll:
- * a handful of numbered objects (Catalog, Pages, one Page + Content stream per page, one standard Helvetica
- * font shared by all pages), a byte-offset xref table, and a trailer. Only left-aligned monospaced-looking
- * line-by-line text is supported -- callers pre-format lines (including simple fixed-width "tables") rather
- * than relying on word-wrap, which keeps this writer's PDF content-stream logic trivial and robust.
- */
 public class MiniPdf {
 
-    private static final double PAGE_WIDTH = 612;  // US Letter, points
+    private static final double PAGE_WIDTH = 612;
     private static final double PAGE_HEIGHT = 792;
     private static final double MARGIN = 54;
     private static final double TITLE_SIZE = 18;
@@ -48,7 +39,7 @@ public class MiniPdf {
         }
 
         private List<String> paginate() {
-            // Returns one PDF content-stream body per page.
+
             List<String> pageStreams = new ArrayList<>();
             StringBuilder stream = new StringBuilder();
             double y = PAGE_HEIGHT - MARGIN;
@@ -148,3 +139,4 @@ public class MiniPdf {
         buf.write(s.getBytes(StandardCharsets.ISO_8859_1));
     }
 }
+

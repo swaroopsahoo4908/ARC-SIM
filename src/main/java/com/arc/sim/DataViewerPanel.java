@@ -253,8 +253,6 @@ public class DataViewerPanel extends JPanel {
         infoLabel.setText(message);
     }
 
-    /** Installs a new table model and (re-)applies the current filter text to it -- setAutoCreateRowSorter
-     *  builds a fresh RowSorter per model, so any active filter has to be re-applied every time. */
     private void applyModel(Vector<Vector<Object>> data, Vector<String> columns) {
         table.setModel(new DefaultTableModel(data, columns));
         applyFilter();
@@ -277,8 +275,6 @@ public class DataViewerPanel extends JPanel {
         }
     }
 
-    /** Tints a row's background when its "meets_both" column (written by Engine 1/4 output) is true, so rows
-     *  that actually hit both the apogee and flight-time targets jump out without hunting through the columns. */
     private final class HighlightRenderer extends DefaultTableCellRenderer {
         @Override
         public Component getTableCellRendererComponent(JTable tbl, Object value, boolean isSelected,

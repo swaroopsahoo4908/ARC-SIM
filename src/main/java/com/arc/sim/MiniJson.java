@@ -38,7 +38,6 @@ public class MiniJson {
         return (v instanceof String) ? (String) v : defaultValue;
     }
 
-    /** Returns the first element of a JSON array node, or null if the node isn't a non-empty list. */
     public static Object first(Object node) {
         if (node instanceof List && !((List<?>) node).isEmpty()) {
             return ((List<?>) node).get(0);

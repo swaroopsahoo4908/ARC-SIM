@@ -16,12 +16,6 @@ public class AppConfig {
     public String weatherApiKey = "";
     public boolean firstRunComplete = false;
 
-    /**
-     * Last-used values for GUI fields (rocket file paths, targets, bounds, output folders), keyed by a short
-     * per-tab identifier (e.g. "engine2.orkFile"). Populated by ArcSimGui as fields are edited, written to disk
-     * on window close. Purely a convenience so re-launching the app doesn't require re-typing everything --
-     * never required for correctness, safe to ignore/clear.
-     */
     public final Map<String, String> fields = new LinkedHashMap<>();
 
     public String getField(String key, String defaultValue) {

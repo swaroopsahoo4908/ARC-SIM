@@ -170,10 +170,10 @@ public class ArcSimGui extends JFrame {
 
         presetCombo.addActionListener(e -> {
             int[][] presets = {
-                    // {windAvgCount, windStdDevCount, turbulenceCount, windDirCount, tempCount, pressureCount, rodAngleCount}
-                    {5, 3, 3, 8, 5, 3, 3},      // Quick
-                    {45, 7, 7, 36, 11, 7, 3},   // Standard
-                    {90, 7, 7, 72, 11, 7, 3},   // Exhaustive
+
+                    {5, 3, 3, 8, 5, 3, 3},
+                    {45, 7, 7, 36, 11, 7, 3},
+                    {90, 7, 7, 72, 11, 7, 3},
             };
             int[] p = presets[presetCombo.getSelectedIndex()];
             windAvgAxis.min.setValue(0.0); windAvgAxis.max.setValue(22.0); windAvgAxis.count.setValue(p[0]);
@@ -1296,7 +1296,6 @@ public class ArcSimGui extends JFrame {
         }
     }
 
-    /** Restores a text field from the last session (if any) and saves every edit back in-memory for next launch. */
     private static void bindPersistentText(String key, JTextField field) {
         String saved = AppConfig.get().getField(key, null);
         if (saved != null && !saved.isBlank()) field.setText(saved);
@@ -1309,7 +1308,6 @@ public class ArcSimGui extends JFrame {
         field.getDocument().addDocumentListener(listener);
     }
 
-    /** Same as {@link #bindPersistentText}, but for a numeric JSpinner. */
     private static void bindPersistentSpinner(String key, JSpinner spinner) {
         String saved = AppConfig.get().getField(key, null);
         if (saved != null) {

@@ -130,10 +130,6 @@ public class WeatherDrivenDesign {
             System.out.println("Wrote local-conditions sweep: " + result.localSweepXlsx.getName());
         }
 
-        // Each margin condition gets its own SimRunner (reloaded from the main solve's saved .ork, which already
-        // has the solved ballast/hole-radius/fin-sweep baked in) so the 4 conditions can solve fin height fully
-        // in parallel without racing on a shared rocket component tree -- OpenRocket's Simulation.simulate()
-        // reads live mutable component state, so concurrent threads can never share one Rocket/SimRunner.
         if (!Thread.currentThread().isInterrupted() && mainSolve.savedOrkFile != null) {
             ExecutorService marginPool = Executors.newFixedThreadPool(Math.min(4, MARGIN_SIGMA_MULTIPLIERS.length));
             List<Future<MarginFin>> marginFutures = new ArrayList<>();
@@ -155,7 +151,7 @@ public class WeatherDrivenDesign {
                     break;
                 }
             }
-            // Preserve original result ordering (wind speed ascending) regardless of which thread finished first.
+
             result.marginFins.sort(java.util.Comparator.comparingDouble(mf -> mf.windSpeedMs));
         }
 

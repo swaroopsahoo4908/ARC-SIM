@@ -132,7 +132,7 @@ public class FullFactorialSweep {
                         threadProgress.set(threadNum, i + 1);
                     }
                 } catch (InterruptedException ignored) {
-                    // expected on cancel -- the queue.put() above unblocks via interrupt
+
                 } catch (Exception e) {
                     e.printStackTrace();
                 }

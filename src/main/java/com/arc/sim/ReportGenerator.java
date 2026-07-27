@@ -6,11 +6,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Builds a plain PDF summary report from a completed Engine 1 (Full Factorial Sweep) or Engine 4
- * (Weather-Driven Design) run -- headline numbers, best/matching results, and a stability-margin reminder,
- * suitable for dropping into a competition binder or sharing without needing to open the raw data files.
- */
 public class ReportGenerator {
 
     private static final int MAX_SCAN_ROWS = 200_000;
@@ -185,3 +180,4 @@ public class ReportGenerator {
         return value.length() > maxLen ? value.substring(0, maxLen) + "..." : value;
     }
 }
+

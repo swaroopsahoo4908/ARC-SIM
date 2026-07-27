@@ -134,12 +134,6 @@ public class WeatherClient {
         return r;
     }
 
-    /**
-     * Pulls a forecast for a specific future date/hour instead of right-now conditions -- lets Engine 4 plan for
-     * actual launch-day timing rather than whatever the weather happens to be at the moment you click Fetch.
-     * weatherapi.com's free tier only forecasts a few days out; requesting further ahead than your plan allows
-     * returns an API error, surfaced as an exception here.
-     */
     public Reading getForecast(double lat, double lon, java.time.LocalDate date, int hour24) throws Exception {
         String dateStr = date.toString();
         String url = FORECAST_API_BASE + "?key=" + apiKey + "&q=" + lat + "," + lon +
