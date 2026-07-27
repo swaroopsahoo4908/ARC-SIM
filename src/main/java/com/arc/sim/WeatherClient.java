@@ -14,6 +14,7 @@ import java.util.Locale;
 public class WeatherClient {
     private static final long REFRESH_INTERVAL_MS = 60L * 60L * 1000L;
     private static final String API_BASE = "https://api.weatherapi.com/v1/current.json";
+    private static final String FORECAST_API_BASE = "https://api.weatherapi.com/v1/forecast.json";
 
     private static final int CACHE_KEY_DECIMALS = 3;
 
@@ -131,6 +132,51 @@ public class WeatherClient {
         lastServed = r;
         lastServedFetchMs = now;
         return r;
+    }
+
+    /**
+     * Pulls a forecast for a specific future date/hour instead of right-now conditions -- lets Engine 4 plan for
+     * actual launch-day timing rather than whatever the weather happens to be at the moment you click Fetch.
+     * weatherapi.com's free tier only forecasts a few days out; requesting further ahead than your plan allows
+     * returns an API error, surfaced as an exception here.
+     */
+    public Reading getForecast(double lat, double lon, java.time.LocalDate date, int hour24) throws Exception {
+        String dateStr = date.toString();
+        String url = FORECAST_API_BASE + "?key=" + apiKey + "&q=" + lat + "," + lon +
+                "&dt=" + dateStr + "&hour=" + hour24;
+        HttpRequest req = HttpRequest.newBuilder(URI.create(url))
+                .timeout(Duration.ofSeconds(15))
+                .GET()
+                .build();
+        HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (resp.statusCode() != 200) {
+            throw new RuntimeException("Weather forecast API returned HTTP " + resp.statusCode() + ": " + resp.body());
+        }
+        Object root = MiniJson.parse(resp.body());
+        Object location = MiniJson.get(root, "location");
+        Object forecast = MiniJson.get(root, "forecast");
+        Object forecastDays = forecast == null ? null : MiniJson.get(forecast, "forecastday");
+        Object firstDay = MiniJson.first(forecastDays);
+        Object hours = firstDay == null ? null : MiniJson.get(firstDay, "hour");
+        Object hourEntry = MiniJson.first(hours);
+        if (hourEntry == null) {
+            throw new RuntimeException("No forecast hour data returned for " + dateStr + " " + hour24 +
+                    ":00 -- this date/time may be outside your weatherapi.com plan's forecast window.");
+        }
+
+        double windKph = MiniJson.asDouble(MiniJson.get(hourEntry, "wind_kph"), 0.0);
+        double gustKph = MiniJson.asDouble(MiniJson.get(hourEntry, "gust_kph"), windKph);
+        double windDirDeg = MiniJson.asDouble(MiniJson.get(hourEntry, "wind_degree"), 0.0);
+        double tempC = MiniJson.asDouble(MiniJson.get(hourEntry, "temp_c"), 15.0);
+        double pressureMbar = MiniJson.asDouble(MiniJson.get(hourEntry, "pressure_mb"), 1013.25);
+        String conditionText = MiniJson.asString(MiniJson.get(hourEntry, "condition", "text"), "unknown");
+        String locationName = MiniJson.asString(MiniJson.get(location, "name"), "Unknown location");
+
+        java.time.Instant forecastFor = java.time.LocalDateTime.of(date, java.time.LocalTime.of(hour24, 0))
+                .atZone(java.time.ZoneId.systemDefault()).toInstant();
+
+        return new Reading(locationName + " (forecast for " + dateStr + " " + String.format("%02d:00", hour24) + ")",
+                windKph / 3.6, gustKph / 3.6, windDirDeg, tempC, pressureMbar, conditionText, forecastFor);
     }
 }
 

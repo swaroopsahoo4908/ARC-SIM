@@ -48,6 +48,12 @@ public class ArcSimGui extends JFrame {
     public ArcSimGui() {
         super("Arc-Sim -- Rocket Simulation Toolkit");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        addWindowListener(new java.awt.event.WindowAdapter() {
+            @Override
+            public void windowClosing(java.awt.event.WindowEvent e) {
+                AppConfig.get().save();
+            }
+        });
         setSize(960, 780);
         setMinimumSize(new java.awt.Dimension(800, 600));
         setLocationRelativeTo(null);
@@ -132,6 +138,10 @@ public class ArcSimGui extends JFrame {
         JTextField configField = new JTextField(new File(lastDir, "sweep_grid.properties").getPath());
         JTextField outDirField = new JTextField();
         JCheckBox forceBox = new JCheckBox("Force run even if over the safety cap");
+        JTextField resumeIndexField = new JTextField("0");
+        bindPersistentText("engine1.orkFile", orkField);
+        bindPersistentText("engine1.configFile", configField);
+        bindPersistentText("engine1.outDir", outDirField);
 
         AxisFields windAvgAxis = new AxisFields("windAvg", 0, 22, 45, 0.5);
         AxisFields windStdDevAxis = new AxisFields("windStdDev", 0, 6, 7, 0.5);
@@ -147,6 +157,34 @@ public class ArcSimGui extends JFrame {
         FormBuilder form = new FormBuilder();
         form.addFileRow("Rocket (.ork) file:", orkField, true, "OpenRocket files (*.ork)", "ork");
         form.addRow("Launch sites (swept over all checked):", siteSelector);
+
+        JComboBox<String> presetCombo = new JComboBox<>(new String[]{
+                "Quick (~16k combos/site -- fast preview)",
+                "Standard (~18.3M combos/site -- default resolution)",
+                "Exhaustive (~73M combos/site -- 4x finer wind avg & direction)"
+        });
+        presetCombo.setSelectedIndex(1);
+        form.addRow("Grid preset:", presetCombo);
+        form.addRow("", hintLabel("Presets set the ranges/step-counts below -- pick one as a starting point, then " +
+                "fine-tune any individual row. Always check Preview before running."));
+
+        presetCombo.addActionListener(e -> {
+            int[][] presets = {
+                    // {windAvgCount, windStdDevCount, turbulenceCount, windDirCount, tempCount, pressureCount, rodAngleCount}
+                    {5, 3, 3, 8, 5, 3, 3},      // Quick
+                    {45, 7, 7, 36, 11, 7, 3},   // Standard
+                    {90, 7, 7, 72, 11, 7, 3},   // Exhaustive
+            };
+            int[] p = presets[presetCombo.getSelectedIndex()];
+            windAvgAxis.min.setValue(0.0); windAvgAxis.max.setValue(22.0); windAvgAxis.count.setValue(p[0]);
+            windStdDevAxis.min.setValue(0.0); windStdDevAxis.max.setValue(6.0); windStdDevAxis.count.setValue(p[1]);
+            turbulenceAxis.min.setValue(0.0); turbulenceAxis.max.setValue(60.0); turbulenceAxis.count.setValue(p[2]);
+            windDirAxis.min.setValue(0.0); windDirAxis.max.setValue(350.0); windDirAxis.count.setValue(p[3]);
+            tempAxis.min.setValue(-10.0); tempAxis.max.setValue(40.0); tempAxis.count.setValue(p[4]);
+            pressureAxis.min.setValue(970.0); pressureAxis.max.setValue(1030.0); pressureAxis.count.setValue(p[5]);
+            rodAngleAxis.min.setValue(0.0); rodAngleAxis.max.setValue(6.0); rodAngleAxis.count.setValue(p[6]);
+            appendLog("Applied \"" + presetCombo.getSelectedItem() + "\" grid preset.\n");
+        });
 
         FormBuilder axisForm = new FormBuilder();
         axisForm.addAxisRow("Wind avg (m/s):", windAvgAxis.min, windAvgAxis.max, windAvgAxis.count);
@@ -203,6 +241,10 @@ public class ArcSimGui extends JFrame {
                 "~1,048,576-row-per-sheet limit; open it in the Data Viewer tab, or pandas/DuckDB/Excel-with-a-plugin. " +
                 "A companion &lt;...&gt;_summary.csv (success rate + correlations) is written alongside it."));
         form.addRow("", forceBox);
+        form.addRow("Resume from index (0 = start from scratch):", resumeIndexField);
+        form.addRow("", hintLabel("If a run gets cancelled or fails partway through, this field auto-fills with the " +
+                "safe resume point after it stops -- click Run again to pick up where it left off. Resuming writes a " +
+                "NEW output file covering just the remainder; you'll have two files to look at together for the full grid."));
         form.addRow("", hintLabel("Check any combination of sites above (Custom uses the lat/lon/alt fields, " +
                 "\"Use Current Location\" fills them in for you) -- each checked site is swept as its own axis. " +
                 "The safety cap and thread count are still set inside the config file -- click " +
@@ -215,6 +257,10 @@ public class ArcSimGui extends JFrame {
         JButton previewButton = new JButton("Preview combination count & time estimate");
         JButton runButton = new JButton("Run Full Factorial Sweep");
         stylePrimaryButton(runButton);
+        JButton reportButton = new JButton("Generate PDF Report");
+        reportButton.setEnabled(false);
+        reportButton.setToolTipText("Enabled after a run completes -- summarizes the run and any conditions meeting both targets.");
+        final File[] lastOutputFile = new File[1];
 
         previewButton.addActionListener(e -> {
             File configFile = requireExistingFile(configField, "grid config .properties file");
@@ -226,11 +272,19 @@ public class ArcSimGui extends JFrame {
             runJob("Preview grid size", listener -> {
                 GridAxis.SweepConfig cfg = buildSweepConfig(configFile, axes, siteSelector.getSelectedSites());
                 long total = cfg.totalCombos();
-                double estSec = total * 0.03;
-                System.out.printf("Grid total: %,d combinations%n", total);
+                long resumeFrom;
+                try {
+                    resumeFrom = Long.parseLong(resumeIndexField.getText().trim());
+                } catch (NumberFormatException nfe) {
+                    resumeFrom = 0;
+                }
+                long remaining = Math.max(0, total - Math.min(resumeFrom, total));
+                double estSec = remaining * 0.03;
+                System.out.printf("Grid total: %,d combinations%s%n", total,
+                        resumeFrom > 0 ? String.format(" (%,d remaining after resume index %,d)", remaining, resumeFrom) : "");
                 System.out.printf("Estimated time: ~%.1f hours single-threaded, ~%.1f hours across %d threads%n",
                         estSec / 3600.0, estSec / 3600.0 / cfg.threads, cfg.threads);
-                if (total > cfg.maxCombosSafety) {
+                if (remaining > cfg.maxCombosSafety) {
                     System.out.println("This EXCEEDS the safety cap (" + cfg.maxCombosSafety +
                             ") -- you'll need to check 'Force' or coarsen the grid to actually run it.");
                 }
@@ -248,19 +302,66 @@ public class ArcSimGui extends JFrame {
             }
             File outDir = resolveOutDir(outDirField, ork, OutputNaming.FULL_FACTORIAL_FOLDER);
             boolean force = forceBox.isSelected();
+            long resumeFrom;
+            try {
+                resumeFrom = Long.parseLong(resumeIndexField.getText().trim());
+            } catch (NumberFormatException nfe) {
+                resumeFrom = 0;
+            }
 
             leaderboardPanel.clear();
+            long finalResumeFrom = resumeFrom;
             runJob("Engine 1: Full Factorial Sweep", listener -> {
                 GridAxis.SweepConfig cfg = buildSweepConfig(configFile, axes, siteSelector.getSelectedSites());
-                File out = FullFactorialSweep.run(ork, cfg, outDir, force, listener, leaderboardPanel::update);
-                if (out != null) openFileLocation(out);
+                File out = FullFactorialSweep.run(ork, cfg, finalResumeFrom, outDir, force, listener, leaderboardPanel::update);
+                if (out != null) {
+                    openFileLocation(out);
+                    lastOutputFile[0] = out;
+                    Long safeResume = readSafeResumeIndex(out);
+                    SwingUtilities.invokeLater(() -> {
+                        reportButton.setEnabled(true);
+                        if (safeResume != null) {
+                            resumeIndexField.setText(String.valueOf(safeResume));
+                            appendLog("Run stopped early -- \"Resume from index\" pre-filled with " + safeResume +
+                                    ". Click Run again to continue where this one left off.\n");
+                        } else {
+                            resumeIndexField.setText("0");
+                        }
+                    });
+                }
+            });
+        });
+
+        reportButton.addActionListener(e -> {
+            if (lastOutputFile[0] == null) return;
+            runJob("Engine 1: Generate PDF Report", listener -> {
+                File parquet = lastOutputFile[0];
+                File reportPdf = new File(parquet.getParentFile(), OutputNaming.baseName(parquet) + "_report.pdf");
+                ReportGenerator.generateFullFactorialReport(parquet, reportPdf);
+                System.out.println("Wrote " + reportPdf.getAbsolutePath());
+                openFileLocation(reportPdf);
             });
         });
 
         JPanel panel = new JPanel(new BorderLayout());
         panel.add(verticalSplit(form.panel(), leaderboardPanel, 0.35), BorderLayout.CENTER);
-        panel.add(buttonRow(previewButton, runButton), BorderLayout.SOUTH);
+        panel.add(buttonRow(previewButton, runButton, reportButton), BorderLayout.SOUTH);
         return withPadding(panel);
+    }
+
+    private static Long readSafeResumeIndex(File parquetOutFile) {
+        try {
+            File summaryFile = new File(parquetOutFile.getParentFile(), OutputNaming.baseName(parquetOutFile) + "_summary.csv");
+            if (!summaryFile.exists()) return null;
+            CsvUtil.Table table = CsvUtil.read(summaryFile);
+            for (List<String> row : table.rows) {
+                if (row.size() >= 2 && row.get(0).equals("Safe resume index")) {
+                    return Long.parseLong(row.get(1).trim());
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
     }
 
     private static GridAxis.SweepConfig buildSweepConfig(File configFile, AxisFields[] axes, List<LaunchSite> sites) throws Exception {
@@ -334,6 +435,22 @@ public class ArcSimGui extends JFrame {
             maxBallastKg.setValue(big.maxBallastKg);
             maxFinHeightM.setValue(big.maxFinHeightM);
         });
+
+        bindPersistentText("engine2.orkFile", orkField);
+        bindPersistentText("engine2.outDir", outDirField);
+        bindPersistentSpinner("engine2.targetApogee", targetApogee);
+        bindPersistentSpinner("engine2.targetTimeMin", targetTimeMin);
+        bindPersistentSpinner("engine2.targetTimeMax", targetTimeMax);
+        bindPersistentSpinner("engine2.windAvg", windAvg);
+        bindPersistentSpinner("engine2.windStdDev", windStdDev);
+        bindPersistentSpinner("engine2.turbulencePct", turbulencePct);
+        bindPersistentSpinner("engine2.windDir", windDir);
+        bindPersistentSpinner("engine2.tempC", tempC);
+        bindPersistentSpinner("engine2.pressureMbar", pressureMbar);
+        bindPersistentSpinner("engine2.maxBallastKg", maxBallastKg);
+        bindPersistentSpinner("engine2.maxFinHeightM", maxFinHeightM);
+        bindPersistentSpinner("engine2.maxHoleRadiusIn", maxHoleRadiusIn);
+        bindPersistentSpinner("engine2.maxSolverPasses", maxSolverPasses);
 
         final SimRunner[] inspectedRunner = new SimRunner[1];
 
@@ -482,6 +599,8 @@ public class ArcSimGui extends JFrame {
         JCheckBox stlBox = new JCheckBox("STL", true);
         JCheckBox objBox = new JCheckBox("OBJ", true);
         JTextField outDirField = new JTextField();
+        bindPersistentText("engine3.orkFile", orkField);
+        bindPersistentText("engine3.outDir", outDirField);
 
         final RocketGeometryExtractor.Geometry[] loadedGeometry = new RocketGeometryExtractor.Geometry[1];
         final File[] loadedOrk = new File[1];
@@ -584,6 +703,21 @@ public class ArcSimGui extends JFrame {
 
         JButton fetchButton = new JButton("Fetch Weather Now");
 
+        java.util.function.Consumer<WeatherClient.Reading> applyReading = r -> {
+            windAvgSpinner.setValue(r.windAvgMs);
+            windGustSpinner.setValue(r.windGustMs);
+            windStdDevSpinner.setValue(r.estimatedWindStdDevMs());
+            windDirSpinner.setValue(r.windDirDeg);
+            tempSpinner.setValue(r.tempC);
+            pressureSpinner.setValue(r.pressureMbar);
+            weatherStatusLabel.setText(String.format("%s -- \"%s\" -- fetched %s",
+                    r.locationName, r.conditionText, r.formattedFetchTime()));
+            appendLog(String.format("Weather pulled for %s: wind %.2f m/s (gust %.2f m/s), %.0f deg, " +
+                            "%.1f C, %.1f mbar -- \"%s\" (fetched %s)%n",
+                    r.locationName, r.windAvgMs, r.windGustMs, r.windDirDeg, r.tempC, r.pressureMbar,
+                    r.conditionText, r.formattedFetchTime()));
+        };
+
         Runnable[] doFetch = new Runnable[1];
         doFetch[0] = () -> {
             if (weatherApiKey() == null || weatherApiKey().isBlank()) {
@@ -601,20 +735,10 @@ public class ArcSimGui extends JFrame {
                 try {
                     WeatherClient.Reading r = weatherClient.getCurrent(site.latitudeDeg, site.longitudeDeg);
                     SwingUtilities.invokeLater(() -> {
-                        windAvgSpinner.setValue(r.windAvgMs);
-                        windGustSpinner.setValue(r.windGustMs);
-                        windStdDevSpinner.setValue(r.estimatedWindStdDevMs());
-                        windDirSpinner.setValue(r.windDirDeg);
-                        tempSpinner.setValue(r.tempC);
-                        pressureSpinner.setValue(r.pressureMbar);
+                        applyReading.accept(r);
                         long cooldownMin = weatherClient.msUntilNextAllowedFetch() / 60000;
-                        weatherStatusLabel.setText(String.format(
-                                "%s -- \"%s\" -- fetched %s (next auto-refresh available in ~%d min)",
-                                r.locationName, r.conditionText, r.formattedFetchTime(), cooldownMin));
-                        appendLog(String.format("Weather pulled for %s: wind %.2f m/s (gust %.2f m/s), %.0f deg, " +
-                                        "%.1f C, %.1f mbar -- \"%s\" (fetched %s)%n",
-                                r.locationName, r.windAvgMs, r.windGustMs, r.windDirDeg, r.tempC, r.pressureMbar,
-                                r.conditionText, r.formattedFetchTime()));
+                        weatherStatusLabel.setText(weatherStatusLabel.getText() +
+                                String.format(" (next auto-refresh available in ~%d min)", cooldownMin));
                         fetchButton.setEnabled(true);
                     });
                 } catch (Exception ex) {
@@ -631,9 +755,59 @@ public class ArcSimGui extends JFrame {
 
         SwingUtilities.invokeLater(() -> doFetch[0].run());
 
+        JTextField forecastDateField = new JTextField(java.time.LocalDate.now().plusDays(1).toString());
+        JSpinner forecastHourSpinner = new JSpinner(new SpinnerNumberModel(12, 0, 23, 1));
+        JButton fetchForecastButton = new JButton("Fetch Forecast");
+        JPanel forecastRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        forecastRow.add(new JLabel("Date (yyyy-mm-dd):"));
+        forecastRow.add(forecastDateField);
+        forecastRow.add(new JLabel("Hour (0-23, local time):"));
+        forecastRow.add(forecastHourSpinner);
+        forecastRow.add(fetchForecastButton);
+        fetchForecastButton.addActionListener(e -> {
+            if (weatherApiKey() == null || weatherApiKey().isBlank()) {
+                JOptionPane.showMessageDialog(this,
+                        "No weather API key is configured yet. Set one under File > Preferences.",
+                        "Weather API key required", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            java.time.LocalDate date;
+            try {
+                date = java.time.LocalDate.parse(forecastDateField.getText().trim());
+            } catch (Exception ex) {
+                JOptionPane.showMessageDialog(this, "Date must be in yyyy-mm-dd format.", "Bad date", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            int hour = (Integer) forecastHourSpinner.getValue();
+            weatherClient.setApiKey(weatherApiKey());
+            weatherStatusLabel.setText("Fetching forecast...");
+            fetchForecastButton.setEnabled(false);
+            LaunchSite site = weatherSiteSelector.getSelectedSite();
+            Thread t = new Thread(() -> {
+                try {
+                    WeatherClient.Reading r = weatherClient.getForecast(site.latitudeDeg, site.longitudeDeg, date, hour);
+                    SwingUtilities.invokeLater(() -> {
+                        applyReading.accept(r);
+                        fetchForecastButton.setEnabled(true);
+                    });
+                } catch (Exception ex) {
+                    SwingUtilities.invokeLater(() -> {
+                        weatherStatusLabel.setText("Forecast fetch failed: " + ex.getMessage());
+                        fetchForecastButton.setEnabled(true);
+                    });
+                }
+            }, "weather-forecast-fetch");
+            t.setDaemon(true);
+            t.start();
+        });
+
         FormBuilder weatherForm = new FormBuilder();
         weatherForm.addRow("Launch site (weather pulled for this location):", weatherSiteSelector);
         weatherForm.addRow("", fetchButton);
+        weatherForm.addRow("Or plan for a future launch time:", forecastRow);
+        weatherForm.addRow("", hintLabel("Forecasts are limited by your weatherapi.com plan's window (a few days " +
+                "ahead on the free tier) -- requesting further out returns an error. Fetching either current or " +
+                "forecast weather fills in the same fields below, which you can still hand-edit afterward."));
         weatherForm.addRow("", weatherStatusLabel);
         weatherForm.addRow("Wind average (m/s, from API -- editable):", windAvgSpinner);
         weatherForm.addRow("Wind gust (m/s, from API -- editable):", windGustSpinner);
@@ -726,6 +900,16 @@ public class ArcSimGui extends JFrame {
             maxFinHeightM.setValue(big.maxFinHeightM);
         });
 
+        bindPersistentText("engine4.orkFile", orkField);
+        bindPersistentSpinner("engine4.targetApogee", targetApogee);
+        bindPersistentSpinner("engine4.targetTimeMin", targetTimeMin);
+        bindPersistentSpinner("engine4.targetTimeMax", targetTimeMax);
+        bindPersistentSpinner("engine4.maxBallastKg", maxBallastKg);
+        bindPersistentSpinner("engine4.maxFinHeightM", maxFinHeightM);
+        bindPersistentSpinner("engine4.maxHoleRadiusIn", maxHoleRadiusIn);
+        bindPersistentSpinner("engine4.maxSolverPasses", maxSolverPasses);
+        bindPersistentSpinner("engine4.localSweepSamples", localSweepSamples);
+
         FormBuilder boundsForm = new FormBuilder();
         boundsForm.addRow("Max ballast (kg):", maxBallastKg);
         boundsForm.addRow("Max fin height (m):", maxFinHeightM);
@@ -739,6 +923,7 @@ public class ArcSimGui extends JFrame {
                 "and +/-1.0 wind-speed std deviations around the pulled average, holding ballast and hole radius fixed."));
 
         JTextField outDirField = new JTextField();
+        bindPersistentText("engine4.outDir", outDirField);
         FormBuilder outputForm = new FormBuilder();
         outputForm.addDirRow("Output folder (blank = \"" + OutputNaming.ENGINE_4_FOLDER + "\" next to the rocket file):", outDirField);
         outputForm.addRow("", hintLabel("Each run gets its own new subfolder (&lt;rocketName&gt;_weatherdesign_&lt;timestamp&gt;/) " +
@@ -765,6 +950,12 @@ public class ArcSimGui extends JFrame {
 
         JButton runButton = new JButton("Run Weather-Driven Design (Solve + CAD + Sweep + Margin Fins)");
         stylePrimaryButton(runButton);
+        JButton reportButton = new JButton("Generate PDF Report");
+        reportButton.setEnabled(false);
+        reportButton.setToolTipText("Enabled after a run completes -- summarizes the solved design, weather used, and margin fin sets.");
+        final WeatherDrivenDesign.Result[] lastResult = new WeatherDrivenDesign.Result[1];
+        final WeatherClient.Reading[] lastWeather = new WeatherClient.Reading[1];
+        final double[] lastTargets = new double[3];
         runButton.addActionListener(e -> {
             if (inspectedRunner[0] == null) {
                 JOptionPane.showMessageDialog(this, "Click 'Inspect Rocket' first so the solver knows which " +
@@ -825,9 +1016,29 @@ public class ArcSimGui extends JFrame {
                             site, selection, bounds, sweepSamples, outDir, combined, mainLeaderboard::update, localLeaderboard::update
                     );
                     if (result != null && result.runDir != null) openDirectory(result.runDir);
+                    if (result != null) {
+                        lastResult[0] = result;
+                        lastWeather[0] = effective;
+                        lastTargets[0] = (Double) targetApogee.getValue();
+                        lastTargets[1] = (Double) targetTimeMin.getValue();
+                        lastTargets[2] = (Double) targetTimeMax.getValue();
+                        SwingUtilities.invokeLater(() -> reportButton.setEnabled(true));
+                    }
                 } finally {
                     SwingUtilities.invokeLater(() -> engine4EtaLabel.setText("Done."));
                 }
+            });
+        });
+
+        reportButton.addActionListener(e -> {
+            if (lastResult[0] == null) return;
+            runJob("Engine 4: Generate PDF Report", listener -> {
+                File runDir = lastResult[0].runDir != null ? lastResult[0].runDir : AppConfig.appDir();
+                File reportPdf = new File(runDir, "weather_design_report.pdf");
+                ReportGenerator.generateWeatherDesignReport(lastResult[0], lastWeather[0],
+                        lastTargets[0], lastTargets[1], lastTargets[2], reportPdf);
+                System.out.println("Wrote " + reportPdf.getAbsolutePath());
+                openFileLocation(reportPdf);
             });
         });
 
@@ -842,7 +1053,7 @@ public class ArcSimGui extends JFrame {
         panel.add(verticalSplit(top, leaderboards, 0.6), BorderLayout.CENTER);
         JPanel bottomRow = new JPanel(new BorderLayout());
         bottomRow.add(engine4EtaLabel, BorderLayout.NORTH);
-        bottomRow.add(buttonRow(runButton), BorderLayout.SOUTH);
+        bottomRow.add(buttonRow(runButton, reportButton), BorderLayout.SOUTH);
         panel.add(bottomRow, BorderLayout.SOUTH);
         return withPadding(panel);
     }
@@ -1083,6 +1294,33 @@ public class ArcSimGui extends JFrame {
             }
             return specs;
         }
+    }
+
+    /** Restores a text field from the last session (if any) and saves every edit back in-memory for next launch. */
+    private static void bindPersistentText(String key, JTextField field) {
+        String saved = AppConfig.get().getField(key, null);
+        if (saved != null && !saved.isBlank()) field.setText(saved);
+        javax.swing.event.DocumentListener listener = new javax.swing.event.DocumentListener() {
+            private void save() { AppConfig.get().setField(key, field.getText()); }
+            public void insertUpdate(javax.swing.event.DocumentEvent e) { save(); }
+            public void removeUpdate(javax.swing.event.DocumentEvent e) { save(); }
+            public void changedUpdate(javax.swing.event.DocumentEvent e) { save(); }
+        };
+        field.getDocument().addDocumentListener(listener);
+    }
+
+    /** Same as {@link #bindPersistentText}, but for a numeric JSpinner. */
+    private static void bindPersistentSpinner(String key, JSpinner spinner) {
+        String saved = AppConfig.get().getField(key, null);
+        if (saved != null) {
+            try {
+                Object cur = spinner.getValue();
+                if (cur instanceof Integer) spinner.setValue((int) Double.parseDouble(saved));
+                else spinner.setValue(Double.parseDouble(saved));
+            } catch (Exception ignored) {
+            }
+        }
+        spinner.addChangeListener(e -> AppConfig.get().setField(key, String.valueOf(spinner.getValue())));
     }
 
     private interface Job {

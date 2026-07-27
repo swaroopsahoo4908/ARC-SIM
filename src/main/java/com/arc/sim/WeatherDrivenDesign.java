@@ -6,6 +6,10 @@ import info.openrocket.core.rocketcomponent.TrapezoidFinSet;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 public class WeatherDrivenDesign {
 
@@ -126,18 +130,64 @@ public class WeatherDrivenDesign {
             System.out.println("Wrote local-conditions sweep: " + result.localSweepXlsx.getName());
         }
 
-        for (double mult : MARGIN_SIGMA_MULTIPLIERS) {
-            if (Thread.currentThread().isInterrupted()) break;
+        // Each margin condition gets its own SimRunner (reloaded from the main solve's saved .ork, which already
+        // has the solved ballast/hole-radius/fin-sweep baked in) so the 4 conditions can solve fin height fully
+        // in parallel without racing on a shared rocket component tree -- OpenRocket's Simulation.simulate()
+        // reads live mutable component state, so concurrent threads can never share one Rocket/SimRunner.
+        if (!Thread.currentThread().isInterrupted() && mainSolve.savedOrkFile != null) {
+            ExecutorService marginPool = Executors.newFixedThreadPool(Math.min(4, MARGIN_SIGMA_MULTIPLIERS.length));
+            List<Future<MarginFin>> marginFutures = new ArrayList<>();
+            for (double mult : MARGIN_SIGMA_MULTIPLIERS) {
+                marginFutures.add(marginPool.submit(marginFinTask(
+                        mult, mainSolve, bounds, fixedSweepM, weather, windStdDevMs, turbulencePct, site,
+                        targetApogeeM, orkFile, runDir)));
+            }
+            marginPool.shutdown();
+            for (Future<MarginFin> f : marginFutures) {
+                try {
+                    MarginFin mf = f.get();
+                    if (mf != null) result.marginFins.add(mf);
+                } catch (java.util.concurrent.ExecutionException ee) {
+                    System.err.println("Margin fin solve failed: " + ee.getCause());
+                } catch (InterruptedException ie) {
+                    marginPool.shutdownNow();
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            // Preserve original result ordering (wind speed ascending) regardless of which thread finished first.
+            result.marginFins.sort(java.util.Comparator.comparingDouble(mf -> mf.windSpeedMs));
+        }
+
+        finSet.setHeight(mainSolve.finHeightM);
+        finSet.setSweep(fixedSweepM);
+        runner.run(new EnvironmentPoint(weather.windAvgMs, windStdDevMs, turbulencePct / 100.0,
+                weather.windDirDeg, weather.tempC, weather.pressureMbar, site));
+
+        System.out.println("=== ENGINE 4 complete ===");
+        return result;
+    }
+
+    private static Callable<MarginFin> marginFinTask(double mult, DesignSolver.Result mainSolve, DesignSolver.Bounds bounds,
+                                                       double fixedSweepM, WeatherClient.Reading weather, double windStdDevMs,
+                                                       double turbulencePct, LaunchSite site, double targetApogeeM,
+                                                       File orkFile, File runDir) {
+        return () -> {
+            if (Thread.currentThread().isInterrupted()) return null;
+            SimRunner marginRunner = new SimRunner(mainSolve.savedOrkFile);
+            Rocket marginRocket = marginRunner.getDocument().getRocket();
+            TrapezoidFinSet marginFinSet = RocketComponents.findFinSet(marginRocket);
+
             double marginWindMs = Math.max(0.0, weather.windAvgMs + mult * windStdDevMs);
             EnvironmentPoint marginEnv = new EnvironmentPoint(marginWindMs, windStdDevMs, turbulencePct / 100.0,
                     weather.windDirDeg, weather.tempC, weather.pressureMbar, site);
 
             double finLo = bounds.minFinHeightM, finHi = bounds.maxFinHeightM;
-            double solvedFinHeightM = solveFinHeightOnly(runner, finSet, fixedSweepM, marginEnv, targetApogeeM,
+            double solvedFinHeightM = solveFinHeightOnly(marginRunner, marginFinSet, fixedSweepM, marginEnv, targetApogeeM,
                     mainSolve.finHeightM, finLo, finHi);
-            finSet.setHeight(solvedFinHeightM);
-            finSet.setSweep(fixedSweepM);
-            SimRunner.FlightResult r = runner.run(marginEnv);
+            marginFinSet.setHeight(solvedFinHeightM);
+            marginFinSet.setSweep(fixedSweepM);
+            SimRunner.FlightResult r = marginRunner.run(marginEnv);
 
             int marginWidenAttempts = 0;
             while (r.ok && Math.abs(r.apogeeM - targetApogeeM) > APOGEE_TOLERANCE_M
@@ -151,14 +201,16 @@ public class WeatherDrivenDesign {
                                 "(attempt %d/%d) and re-solving.%n",
                         marginWindMs, mult, solvedFinHeightM, finLo, finHi, newFinHi, marginWidenAttempts, MAX_AUTO_WIDEN_ATTEMPTS);
                 finHi = newFinHi;
-                solvedFinHeightM = solveFinHeightOnly(runner, finSet, fixedSweepM, marginEnv, targetApogeeM,
+                solvedFinHeightM = solveFinHeightOnly(marginRunner, marginFinSet, fixedSweepM, marginEnv, targetApogeeM,
                         solvedFinHeightM, finLo, finHi);
-                finSet.setHeight(solvedFinHeightM);
-                finSet.setSweep(fixedSweepM);
-                r = runner.run(marginEnv);
+                marginFinSet.setHeight(solvedFinHeightM);
+                marginFinSet.setSweep(fixedSweepM);
+                r = marginRunner.run(marginEnv);
             }
 
-            RocketGeometryExtractor.Geometry marginGeo = RocketGeometryExtractor.extract(rocket);
+            if (Thread.currentThread().isInterrupted()) return null;
+
+            RocketGeometryExtractor.Geometry marginGeo = RocketGeometryExtractor.extract(marginRocket);
             List<MeshExporter.Triangle> finMesh = MeshExporter.buildFinSetMesh(marginGeo.fins);
             String tag = ("finset_wind" + String.format("%.2f", marginWindMs) + "ms").replace('.', '_');
             File finStl = OutputNaming.uniqueFile(orkFile, runDir, tag, "stl");
@@ -171,16 +223,8 @@ public class WeatherDrivenDesign {
                     marginWindMs, mult, solvedFinHeightM, r.apogeeM, targetApogeeM, APOGEE_TOLERANCE_M, r.flightTimeS,
                     finStl.getName(), finObj.getName());
 
-            result.marginFins.add(new MarginFin(marginWindMs, solvedFinHeightM, r, finStl, finObj));
-        }
-
-        finSet.setHeight(mainSolve.finHeightM);
-        finSet.setSweep(fixedSweepM);
-        runner.run(new EnvironmentPoint(weather.windAvgMs, windStdDevMs, turbulencePct / 100.0,
-                weather.windDirDeg, weather.tempC, weather.pressureMbar, site));
-
-        System.out.println("=== ENGINE 4 complete ===");
-        return result;
+            return new MarginFin(marginWindMs, solvedFinHeightM, r, finStl, finObj);
+        };
     }
 
     private static double solveFinHeightOnly(SimRunner runner, TrapezoidFinSet finSet, double fixedSweepM,

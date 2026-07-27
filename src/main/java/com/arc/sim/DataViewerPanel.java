@@ -4,21 +4,29 @@ import org.apache.poi.ss.usermodel.*;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
+import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
+import javax.swing.table.TableRowSorter;
 import java.awt.*;
 import java.awt.Color;
 import java.io.File;
 import java.util.List;
 import java.util.Vector;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 public class DataViewerPanel extends JPanel {
 
     private static final int DEFAULT_ROW_CAP = 20_000;
+    private static final String HIGHLIGHT_COLUMN = "meets_both";
+    private static final Color HIGHLIGHT_COLOR = new Color(0x2a, 0x4a, 0x2a);
 
     private final JTextField pathField = new JTextField();
     private final JComboBox<String> sheetCombo = new JComboBox<>();
     private final JLabel infoLabel = new JLabel(" ");
     private final JSpinner rowCapSpinner = new JSpinner(new SpinnerNumberModel(DEFAULT_ROW_CAP, 100, 5_000_000, 1000));
+    private final JTextField filterField = new JTextField();
+    private final JCheckBox highlightBox = new JCheckBox("Highlight rows meeting both targets", true);
     private final JTable table = new JTable();
 
     private Workbook openWorkbook;
@@ -54,6 +62,14 @@ public class DataViewerPanel extends JPanel {
         gbc.gridx = 3;
         top.add(rowCapSpinner, gbc);
 
+        gbc.gridx = 0; gbc.gridy = 2;
+        top.add(new JLabel("Filter (any column contains):"), gbc);
+        gbc.gridx = 1; gbc.gridwidth = 1;
+        top.add(filterField, gbc);
+        gbc.gridx = 2; gbc.gridwidth = 2;
+        top.add(highlightBox, gbc);
+        gbc.gridwidth = 1;
+
         browseButton.addActionListener(e -> browse());
         openButton.addActionListener(e -> openCurrentPath());
         sheetCombo.addActionListener(e -> {
@@ -61,9 +77,16 @@ public class DataViewerPanel extends JPanel {
                 loadXlsxSheet((String) sheetCombo.getSelectedItem());
             }
         });
+        filterField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            public void insertUpdate(javax.swing.event.DocumentEvent e) { applyFilter(); }
+            public void removeUpdate(javax.swing.event.DocumentEvent e) { applyFilter(); }
+            public void changedUpdate(javax.swing.event.DocumentEvent e) { applyFilter(); }
+        });
+        highlightBox.addActionListener(e -> table.repaint());
 
         table.setAutoCreateRowSorter(true);
         table.setFillsViewportHeight(true);
+        table.setDefaultRenderer(Object.class, new HighlightRenderer());
 
         JPanel center = new JPanel(new BorderLayout());
         center.add(top, BorderLayout.NORTH);
@@ -174,7 +197,7 @@ public class DataViewerPanel extends JPanel {
                 shown++;
             }
 
-            table.setModel(new DefaultTableModel(data, columns));
+            applyModel(data, columns);
             int totalDataRows = Math.max(0, lastRow - firstRow);
             infoLabel.setText(String.format("Sheet '%s': showing %,d of %,d row(s)%s", sheetName, shown, totalDataRows,
                     shown < totalDataRows ? " (raise the row cap to see more)" : ""));
@@ -198,7 +221,7 @@ public class DataViewerPanel extends JPanel {
             data.add(rowData);
             shown++;
         }
-        table.setModel(new DefaultTableModel(data, columns));
+        applyModel(data, columns);
         infoLabel.setText(String.format("CSV: showing %,d of %,d row(s)%s", shown, t.rows.size(),
                 shown < t.rows.size() ? " (raise the row cap to see more)" : ""));
     }
@@ -219,15 +242,72 @@ public class DataViewerPanel extends JPanel {
             for (Object v : row) rowData.add(v == null ? "" : v);
             data.add(rowData);
         }
-        table.setModel(new DefaultTableModel(data, columns));
+        applyModel(data, columns);
         infoLabel.setText(String.format("Parquet: showing %,d of %,d row(s)%s -- columns: %s",
                 result.rows.size(), totalRows, result.rows.size() < totalRows ? " (raise the row cap to see more)" : "",
                 String.join(", ", result.columnNames)));
     }
 
     private void setEmptyModel(String message) {
-        table.setModel(new DefaultTableModel(new Vector<>(), new Vector<>()));
+        applyModel(new Vector<>(), new Vector<>());
         infoLabel.setText(message);
+    }
+
+    /** Installs a new table model and (re-)applies the current filter text to it -- setAutoCreateRowSorter
+     *  builds a fresh RowSorter per model, so any active filter has to be re-applied every time. */
+    private void applyModel(Vector<Vector<Object>> data, Vector<String> columns) {
+        table.setModel(new DefaultTableModel(data, columns));
+        applyFilter();
+    }
+
+    private void applyFilter() {
+        javax.swing.RowSorter<? extends javax.swing.table.TableModel> sorter = table.getRowSorter();
+        if (!(sorter instanceof TableRowSorter)) return;
+        TableRowSorter<?> rowSorter = (TableRowSorter<?>) sorter;
+        String text = filterField.getText().trim();
+        if (text.isEmpty()) {
+            rowSorter.setRowFilter(null);
+            return;
+        }
+        try {
+            String quoted = Pattern.quote(text);
+            rowSorter.setRowFilter(javax.swing.RowFilter.regexFilter("(?i)" + quoted));
+        } catch (PatternSyntaxException ex) {
+            rowSorter.setRowFilter(null);
+        }
+    }
+
+    /** Tints a row's background when its "meets_both" column (written by Engine 1/4 output) is true, so rows
+     *  that actually hit both the apogee and flight-time targets jump out without hunting through the columns. */
+    private final class HighlightRenderer extends DefaultTableCellRenderer {
+        @Override
+        public Component getTableCellRendererComponent(JTable tbl, Object value, boolean isSelected,
+                                                         boolean hasFocus, int row, int column) {
+            Component c = super.getTableCellRendererComponent(tbl, value, isSelected, hasFocus, row, column);
+            if (!isSelected) {
+                c.setBackground(rowMeetsBoth(row) ? HIGHLIGHT_COLOR : tbl.getBackground());
+            }
+            return c;
+        }
+
+        private boolean rowMeetsBoth(int viewRow) {
+            if (!highlightBox.isSelected()) return false;
+            try {
+                int modelCol = -1;
+                for (int c = 0; c < table.getModel().getColumnCount(); c++) {
+                    if (table.getModel().getColumnName(c).equalsIgnoreCase(HIGHLIGHT_COLUMN)) {
+                        modelCol = c;
+                        break;
+                    }
+                }
+                if (modelCol < 0) return false;
+                int modelRow = table.convertRowIndexToModel(viewRow);
+                Object v = table.getModel().getValueAt(modelRow, modelCol);
+                return v != null && "true".equalsIgnoreCase(String.valueOf(v));
+            } catch (Exception ex) {
+                return false;
+            }
+        }
     }
 }
 

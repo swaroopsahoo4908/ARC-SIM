@@ -1,0 +1,36 @@
+#!/bin/bash
+# Arc-Sim launcher (macOS .app bundle). Finds ArcSim.jar next to the .app itself and runs it.
+#
+# This bundle is NOT code-signed or notarized (that requires a paid Apple Developer account and
+# a real Mac to sign on, neither of which is available in the environment that built this). The
+# first time you open it, right-click ArcSim.app -> Open -> Open (once) to get past Gatekeeper's
+# "unidentified developer" warning. After that first approval, double-clicking works normally.
+
+MIN_JAVA_MAJOR=17
+
+# Contents/MacOS/ArcSim -> walk up to the folder containing ArcSim.app, where ArcSim.jar should live.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+BUNDLE_PARENT="$(dirname "$APP_DIR")"
+JAR="$BUNDLE_PARENT/ArcSim.jar"
+
+if [ ! -f "$JAR" ]; then
+    osascript -e "display alert \"Arc-Sim\" message \"ArcSim.jar was not found next to ArcSim.app. Keep ArcSim.app in the same folder as ArcSim.jar.\" as critical" >/dev/null 2>&1
+    exit 1
+fi
+
+if ! command -v java >/dev/null 2>&1; then
+    osascript -e 'display alert "Arc-Sim" message "No Java runtime was found on this Mac. Install a free Java 17 or newer runtime (e.g. from https://adoptium.net) and try again." as critical' >/dev/null 2>&1
+    exit 1
+fi
+
+JAVA_MAJOR=$(java -version 2>&1 | head -1 | sed -E 's/.*"([0-9]+)\..*/\1/')
+if [ -z "$JAVA_MAJOR" ]; then
+    JAVA_MAJOR=$(java -version 2>&1 | head -1 | sed -E 's/.*"([0-9]+)".*/\1/')
+fi
+if [ -n "$JAVA_MAJOR" ] && [ "$JAVA_MAJOR" -lt "$MIN_JAVA_MAJOR" ] 2>/dev/null; then
+    osascript -e "display alert \"Arc-Sim\" message \"Java $JAVA_MAJOR was found, but Arc-Sim needs Java $MIN_JAVA_MAJOR or newer. Install an updated runtime from https://adoptium.net and try again.\" as critical" >/dev/null 2>&1
+    exit 1
+fi
+
+exec java -jar "$JAR" >/tmp/arcsim_app_log.txt 2>&1

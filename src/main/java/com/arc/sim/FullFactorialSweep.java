@@ -21,22 +21,30 @@ public class FullFactorialSweep {
 
     public static void main(String[] args) {
         if (args.length < 2) {
-            System.err.println("Usage: FullFactorialSweep <input.ork> <sweep_grid.properties> [outputDir] [--force]");
+            System.err.println("Usage: FullFactorialSweep <input.ork> <sweep_grid.properties> [outputDir] [--force] [--resume=N]");
             System.err.println("  outputDir defaults to the input .ork file's own folder if omitted.");
+            System.err.println("  --resume=N picks up at combination index N (see 'Safe resume index' in a prior");
+            System.err.println("  cancelled/failed run's _summary.csv) instead of starting over from 0.");
             System.err.println("  Output filename is auto-generated as <orkName>_fullfactorial_<timestamp>.parquet " +
                     "(+ a companion _summary.csv) -- never overwrites a previous run.");
             System.exit(1);
         }
-        File outDir = (args.length > 2 && !args[2].equals("--force")) ? new File(args[2]) : null;
+        File outDir = (args.length > 2 && !args[2].equals("--force") && !args[2].startsWith("--resume=")) ? new File(args[2]) : null;
         boolean force = java.util.Arrays.asList(args).contains("--force");
+        long resumeIndex = 0;
+        for (String a : args) {
+            if (a.startsWith("--resume=")) {
+                resumeIndex = Long.parseLong(a.substring("--resume=".length()));
+            }
+        }
         try {
-            run(new File(args[0]), new File(args[1]), outDir, force,
+            run(new File(args[0]), GridAxis.load(new File(args[1])), resumeIndex, outDir, force,
                     (processed, total, eta) -> {
                         if (processed % 50_000 == 0 || processed == total) {
                             System.out.printf("...%,d / %,d combinations done (%.1f%%) -- ETA %s%n",
                                     processed, total, 100.0 * processed / total, EtaTracker.formatDuration(eta));
                         }
-                    });
+                    }, LeaderboardListener.NONE);
         } catch (Exception e) {
             e.printStackTrace();
             System.exit(1);
@@ -58,28 +66,40 @@ public class FullFactorialSweep {
 
     public static File run(File orkFile, GridAxis.SweepConfig cfg, File outDir, boolean force, ProgressListener listener,
                             LeaderboardListener leaderboardListener) throws Exception {
+        return run(orkFile, cfg, 0, outDir, force, listener, leaderboardListener);
+    }
+
+    public static File run(File orkFile, GridAxis.SweepConfig cfg, long startIndex, File outDir, boolean force,
+                            ProgressListener listener, LeaderboardListener leaderboardListener) throws Exception {
         File outFile = OutputNaming.uniqueFile(orkFile, outDir, "fullfactorial", "parquet");
         long total = cfg.totalCombos();
+        startIndex = Math.max(0, Math.min(startIndex, total));
+        long remaining = total - startIndex;
         double estSecPerSim = 0.03;
-        double estHoursSingleThread = total * estSecPerSim / 3600.0;
+        double estHoursSingleThread = remaining * estSecPerSim / 3600.0;
         double estHoursParallel = estHoursSingleThread / cfg.threads;
 
         System.out.printf("Grid: windAvg=%d x windStdDev=%d x turbulence=%d x windDir=%d x temp=%d x pressure=%d x rodAngle=%d x sites=%d%n",
                 cfg.windAvg.count(), cfg.windStdDev.count(), cfg.turbulencePct.count(),
                 cfg.windDir.count(), cfg.temp.count(), cfg.pressure.count(), cfg.rodAngle.count(), cfg.sites.size());
         System.out.printf("TOTAL COMBINATIONS: %,d%n", total);
+        if (startIndex > 0) {
+            System.out.printf("RESUMING from index %,d -- %,d combinations remaining (this run writes a NEW output " +
+                    "file covering just the remainder; combine with the earlier file's rows for the full picture).%n",
+                    startIndex, remaining);
+        }
         System.out.printf("Estimated runtime: ~%.1f hours single-threaded, ~%.1f hours across %d threads " +
                 "(rough estimate at %.0fms/sim -- time a short run on your machine to calibrate)%n",
                 estHoursSingleThread, estHoursParallel, cfg.threads, estSecPerSim * 1000);
 
-        if (total > cfg.maxCombosSafety && !force) {
+        if (remaining > cfg.maxCombosSafety && !force) {
             String msg = String.format("Refusing to run: %,d combinations exceeds the safety cap of %,d " +
                     "(set in sweep_grid.properties as maxCombosSafety). Coarsen the increments, raise " +
-                    "maxCombosSafety, or force the run.", total, cfg.maxCombosSafety);
+                    "maxCombosSafety, or force the run.", remaining, cfg.maxCombosSafety);
             throw new IllegalStateException(msg);
         }
 
-        EtaTracker etaTracker = new EtaTracker(total);
+        EtaTracker etaTracker = new EtaTracker(remaining);
 
         long[] counts = {
                 cfg.windAvg.count(), cfg.windStdDev.count(), cfg.turbulencePct.count(),
@@ -89,13 +109,16 @@ public class FullFactorialSweep {
         BlockingQueue<Object[]> queue = new ArrayBlockingQueue<>((int) QUEUE_CAPACITY);
 
         ExecutorService pool = Executors.newFixedThreadPool(cfg.threads);
-        long chunkSize = (total + cfg.threads - 1) / cfg.threads;
+        long chunkSize = (remaining + cfg.threads - 1) / cfg.threads;
         List<Future<?>> futures = new java.util.ArrayList<>();
+        java.util.concurrent.atomic.AtomicLongArray threadProgress = new java.util.concurrent.atomic.AtomicLongArray(cfg.threads);
 
         for (int t = 0; t < cfg.threads; t++) {
-            long startIdx = t * chunkSize;
+            long startIdx = startIndex + t * chunkSize;
             long endIdx = Math.min(total, startIdx + chunkSize);
+            threadProgress.set(t, startIdx);
             if (startIdx >= endIdx) continue;
+            final int threadNum = t;
             futures.add(pool.submit(() -> {
                 try {
                     SimRunner runner = new SimRunner(orkFile);
@@ -106,7 +129,10 @@ public class FullFactorialSweep {
                         EnvironmentPoint env = new EnvironmentPoint(vals[0], vals[1], vals[2] / 100.0, vals[3], vals[4], vals[5], vals[6], site);
                         SimRunner.FlightResult r = runner.run(env);
                         queue.put(new Object[]{vals, site, r});
+                        threadProgress.set(threadNum, i + 1);
                     }
+                } catch (InterruptedException ignored) {
+                    // expected on cancel -- the queue.put() above unblocks via interrupt
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
@@ -147,6 +173,7 @@ public class FullFactorialSweep {
         RunningStats.Correlation corrRodAngleApogee = new RunningStats.Correlation();
         RunningStats.Correlation corrRodAngleTime = new RunningStats.Correlation();
 
+        Exception failure = null;
         try (MiniParquet.Writer writer = new MiniParquet.Writer(outFile, columns, ROWS_PER_ROW_GROUP)) {
 
             LaunchSite baselineSite = cfg.sites.get(0);
@@ -157,9 +184,14 @@ public class FullFactorialSweep {
                     stpEnv.windDirectionDeg, stpEnv.temperatureC, stpEnv.pressureMbar, stpEnv.rodAngleDeg, baselineSite.label,
                     stpResult, "STP_ZERO_BASELINE");
 
-            while (processed < total) {
+            while (processed < remaining) {
                 if (Thread.currentThread().isInterrupted()) {
-                    System.out.println("Cancelled after " + processed + " / " + total + " combinations.");
+                    long safeResumeIndex = total;
+                    for (int t = 0; t < threadProgress.length(); t++) {
+                        safeResumeIndex = Math.min(safeResumeIndex, threadProgress.get(t));
+                    }
+                    System.out.println("Cancelled after " + processed + " / " + remaining + " combinations. " +
+                            "Safe resume index: " + safeResumeIndex + " (every index below this is guaranteed complete).");
                     pool.shutdownNow();
                     break;
                 }
@@ -196,8 +228,8 @@ public class FullFactorialSweep {
                 }
 
                 processed++;
-                if (processed % 1_000 == 0 || processed == total) {
-                    listener.onProgress(processed, total, etaTracker.etaSeconds(processed));
+                if (processed % 1_000 == 0 || processed == remaining) {
+                    listener.onProgress(processed, remaining, etaTracker.etaSeconds(processed));
                 }
             }
 
@@ -209,16 +241,35 @@ public class FullFactorialSweep {
                 }
             }
             pool.shutdown();
+        } catch (Exception e) {
+            failure = e;
+            pool.shutdownNow();
         }
 
+        boolean cancelled = Thread.currentThread().isInterrupted() || failure instanceof InterruptedException;
+        boolean incomplete = failure != null || cancelled || processed < remaining;
+        long safeResumeIndex = total;
+        for (int t = 0; t < threadProgress.length(); t++) {
+            safeResumeIndex = Math.min(safeResumeIndex, threadProgress.get(t));
+        }
         File summaryFile = new File(outFile.getParentFile(), OutputNaming.baseName(outFile) + "_summary.csv");
-        writeSummaryCsv(summaryFile, processed, meetsBoth, apogeeStats, timeStats,
+        writeSummaryCsv(summaryFile, processed, remaining, total, startIndex, meetsBoth, apogeeStats, timeStats,
                 corrWindApogee, corrTempApogee, corrPressureApogee,
                 corrWindTime, corrTempTime, corrPressureTime,
-                corrRodAngleApogee, corrRodAngleTime);
+                corrRodAngleApogee, corrRodAngleTime, incomplete, cancelled, failure,
+                incomplete ? safeResumeIndex : -1);
 
         System.out.println("Wrote " + processed + " combinations to " + outFile.getAbsolutePath());
-        System.out.println("Wrote summary to " + summaryFile.getAbsolutePath());
+        if (incomplete) {
+            System.out.println("Wrote PARTIAL summary (" + processed + " / " + remaining + " combinations, " +
+                    (failure != null ? "run failed: " + failure : "run cancelled") + ", safe resume index " +
+                    safeResumeIndex + ") to " + summaryFile.getAbsolutePath());
+        } else {
+            System.out.println("Wrote summary to " + summaryFile.getAbsolutePath());
+        }
+        if (failure != null && !cancelled) {
+            throw failure;
+        }
         return outFile;
     }
 
@@ -257,20 +308,36 @@ public class FullFactorialSweep {
         };
     }
 
-    private static void writeSummaryCsv(File summaryFile, long total, long meetsBoth,
+    private static void writeSummaryCsv(File summaryFile, long processed, long plannedTotal, long fullGridTotal,
+                                         long startIndex, long meetsBoth,
                                          RunningStats apogeeStats, RunningStats timeStats,
                                          RunningStats.Correlation corrWindApogee, RunningStats.Correlation corrTempApogee,
                                          RunningStats.Correlation corrPressureApogee,
                                          RunningStats.Correlation corrWindTime, RunningStats.Correlation corrTempTime,
                                          RunningStats.Correlation corrPressureTime,
                                          RunningStats.Correlation corrRodAngleApogee,
-                                         RunningStats.Correlation corrRodAngleTime) throws Exception {
+                                         RunningStats.Correlation corrRodAngleTime,
+                                         boolean incomplete, boolean cancelled, Exception failure,
+                                         long safeResumeIndex) throws Exception {
         try (PrintWriter pw = new PrintWriter(new FileWriter(summaryFile))) {
             pw.println(CsvUtil.row("metric", "value"));
-            pw.println(CsvUtil.row("Total combinations", total));
+            if (incomplete) {
+                String reason = failure != null ? "ERROR: " + failure : (cancelled ? "CANCELLED by user" : "STOPPED early");
+                pw.println(CsvUtil.row("Run status", "INCOMPLETE (" + reason + ") -- " + processed + " / " + plannedTotal +
+                        " combinations completed this run. The .parquet file only has these " + processed + " rows."));
+                pw.println(CsvUtil.row("Safe resume index", safeResumeIndex));
+            } else {
+                pw.println(CsvUtil.row("Run status", "COMPLETE"));
+            }
+            if (startIndex > 0) {
+                pw.println(CsvUtil.row("Resumed from index", startIndex));
+            }
+            pw.println(CsvUtil.row("Full grid size (all sites/conditions)", fullGridTotal));
+            pw.println(CsvUtil.row("Combinations planned this run", plannedTotal));
+            pw.println(CsvUtil.row("Combinations completed", processed));
             pw.println(CsvUtil.row("Combinations meeting BOTH targets (apogee " + TARGET_APOGEE_M + "m +/- " +
                     APOGEE_TOLERANCE_M + "m, time " + TARGET_TIME_CENTER_S + "s +/- " + TIME_TOLERANCE_S + "s)", meetsBoth));
-            pw.println(CsvUtil.row("Success rate", (double) meetsBoth / total));
+            pw.println(CsvUtil.row("Success rate", processed > 0 ? (double) meetsBoth / processed : 0.0));
             pw.println(CsvUtil.row("Mean apogee (m)", apogeeStats.mean()));
             pw.println(CsvUtil.row("Std dev apogee (m)", apogeeStats.stddev()));
             pw.println(CsvUtil.row("Mean flight time (s)", timeStats.mean()));
