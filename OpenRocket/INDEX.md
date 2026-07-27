@@ -17,16 +17,17 @@
 
 ## arc-sim output subfolders
 
-`arc-sim`'s four engines each write into their own subfolder here, next to the `.ork` inputs, using
-`AppConfig`'s working-folder default. Every run is auto-named with a timestamp, so nothing here
-ever gets overwritten by a later run.
+`arc-sim`'s engines and tools each write into their own subfolder here, next to the `.ork` inputs,
+using `AppConfig`'s working-folder default. Every run is auto-named with a timestamp, so nothing
+here ever gets overwritten by a later run.
 
 | Subfolder | Written by | Contents |
 |---|---|---|
 | `Full Factorial/` | Engine 1 (Full Factorial Sweep) | `<rocket>_fullfactorial_<timestamp>.parquet` + companion `_summary.csv` |
 | `OpenRocket Solves/` | Engine 2 (Design Solver), run standalone | `<rocket>_solved_<timestamp>.ork` |
-| `CAD Files/` | Engine 3 (Geometry Export) | One `<rocket>_geometry_<timestamp>/` folder per run, each with `.stl` + `.obj` |
+| `CAD Files/` | Geometry Exporter | One `<rocket>_geometry_<timestamp>/` folder per run, each with `.stl` + `.obj` |
 | `Engine 4/` | Engine 4 (Weather-Driven Design) | One `<rocket>_weatherdesign_<timestamp>/` folder per run, each with its own solved `.ork`, main CAD `.stl`/`.obj`, a local-conditions `.xlsx`, and 4 margin fin-set `.stl`/`.obj` pairs |
+| `Rocket Builder/` | Rocket Builder | New from-scratch `.ork` designs, saved wherever/whenever you choose to "Save As" -- filenames aren't auto-timestamped since it's an editor, not a batch tool, so name them yourself (this folder is just the default starting point the first time you save a never-before-saved rocket in a session). |
 
 Note: a Design Solver run launched directly from Engine 2's tab lands in `OpenRocket Solves/`; a
 solve run as *step 1* of an Engine 4 pipeline instead lands inside that run's own

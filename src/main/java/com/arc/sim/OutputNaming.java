@@ -10,6 +10,8 @@ public class OutputNaming {
     public static final String OPENROCKET_SOLVES_FOLDER = "OpenRocket Solves";
     public static final String CAD_FILES_FOLDER = "CAD Files";
     public static final String ENGINE_4_FOLDER = "Engine 4";
+    public static final String ROCKET_BUILDER_FOLDER = "Rocket Builder";
+    public static final String OPENROCKET_ROOT_FOLDER = "OpenRocket";
 
     private static SimpleDateFormat newFormat() {
         return new SimpleDateFormat("yyyyMMdd_HHmmss");
@@ -48,6 +50,21 @@ public class OutputNaming {
         }
         if (!dir.mkdirs()) {
             throw new IllegalStateException("Could not create output folder: " + dir.getAbsolutePath());
+        }
+        return dir;
+    }
+
+    /**
+     * Resolves (creating if needed) an app-relative "OpenRocket/&lt;folderName&gt;" category folder next
+     * to the app itself, mirroring the input-file-relative namedSubfolder() convention the other engines
+     * use for tools (like Rocket Builder) that don't start from an existing .ork input file. Falls back
+     * to appDir itself if creation fails for any reason (read-only install location, etc).
+     */
+    public static File appRelativeFolder(File appDir, String folderName) {
+        File root = new File(appDir, OPENROCKET_ROOT_FOLDER);
+        File dir = new File(root, folderName);
+        if (!dir.exists() && !dir.mkdirs() && !dir.exists()) {
+            return appDir;
         }
         return dir;
     }

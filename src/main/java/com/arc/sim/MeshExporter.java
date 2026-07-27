@@ -180,7 +180,7 @@ public class MeshExporter {
 
     public static void writeObj(List<Triangle> tris, File out, String objectName) throws IOException {
         try (PrintWriter pw = new PrintWriter(out, StandardCharsets.UTF_8)) {
-            pw.println("# Exported by ARC Rocket Simulation Toolkit -- Engine 3: Geometry Export");
+            pw.println("# Exported by ARC Rocket Simulation Toolkit -- Geometry Exporter");
             pw.println("# Basic body-of-revolution + flat-fin approximation, units millimeters");
             pw.println("o " + sanitize(objectName));
             int vIdx = 1;

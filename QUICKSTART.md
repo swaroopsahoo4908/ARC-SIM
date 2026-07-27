@@ -58,10 +58,11 @@ same folder as `ArcSim.jar`/`ArcSim.command` each time you launch it, then follo
 you browse next for the rest of that session -- there's no separate working-folder setting to
 configure or get out of sync with where you actually keep the app.
 
-## 4. The four engines.
+## 4. The three engines (plus Rocket Builder, Geometry Exporter, and Data Viewer).
 
-Arc-Sim opens with one tab per engine, plus a Data Viewer tab. Each engine tab has its own form,
-a *Run* button, a progress bar, and a live log at the bottom of the window.
+Arc-Sim opens with one tab per engine, plus three utility tabs: Rocket Builder, Geometry Exporter,
+and Data Viewer. Each engine tab has its own form, a *Run* button, a progress bar, and a live log
+at the bottom of the window.
 
 1. *Engine 1 -- Full Factorial Sweep*: point it at a `.ork` rocket file and exhaustively tests
    every combination of wind, temperature, pressure, launch angle, and launch site in a grid,
@@ -82,13 +83,35 @@ a *Run* button, a progress bar, and a live log at the bottom of the window.
 2. *Engine 2 -- Design Solver*: give it a target apogee and flight-time window plus one fixed set
    of conditions, and it solves for ballast weight, fin height, and parachute spill-hole size to
    hit those targets, saving a new `.ork` file with the solved design.
-3. *Engine 3 -- Geometry Export*: exports a 3D-printable/CAD-importable mesh (STL/OBJ) of your
-   rocket's outer shape, for a quick physical mockup or CAD sanity check.
-4. *Engine 4 -- Weather-Driven Design*: pulls live current or forecast weather for a launch site
+3. *Engine 4 -- Weather-Driven Design*: pulls live current or forecast weather for a launch site
    (set a future date/hour and click *Fetch Forecast* to plan ahead of a launch day, within your
    weatherapi.com plan's forecast window) and runs an end-to-end pipeline (solve, export,
    sensitivity check, spare fin sets -- solved in parallel) against it in one click. Requires the
    weather API key from setup. *Generate PDF Report* is available once a run finishes.
+
+And the utility tabs (not simulation engines -- no target/atmosphere inputs, no Run button):
+
+- *Rocket Builder*: a from-scratch `.ork` editor -- add, remove, and reposition components
+  (nose cones, body tubes, transitions, fin sets, parachutes, mass components, and more), edit
+  their geometry and materials, assign a motor to a motor mount from the bundled thrust-curve
+  database, and save the result as a new `.ork` file, all without leaving Arc-Sim.
+  - *Custom materials*: click the "+" next to any material dropdown to define one by name and
+    density -- it's then available in every material dropdown for the rest of the session.
+  - *Custom motors*: in the motor picker (click "Select Motor..." on any motor mount), either
+    *Create Custom Motor...* (hand-enter designation, diameter, length, burn time, total impulse,
+    masses, and delays -- builds an idealized thrust curve matching your numbers exactly) or
+    *Import Motor File (.eng/.rse)...* to load a real thrust-curve file. Both show up in a
+    "Custom / Imported Motors" table in the picker alongside the bundled database. These only
+    stick around for the current session -- if you restart Arc-Sim, re-define or re-import a
+    custom motor before opening a rocket that uses one, or its saved `.ork` will fail to
+    reload the motor.
+  - The first time you save a brand-new rocket, "Save As" defaults into `OpenRocket/Rocket
+    Builder/` next to the app, matching the other tools' output folders.
+  - Everything you build here -- including small appendages like rail buttons and launch lugs --
+    feeds straight into every other engine's physics with no extra steps, since Arc-Sim runs the
+    same real OpenRocket component tree and simulation engine everywhere.
+- *Geometry Exporter*: exports a 3D-printable/CAD-importable mesh (STL/OBJ) of your rocket's
+  outer shape, for a quick physical mockup or CAD sanity check.
 
 Every run writes its output into a clearly named subfolder/file (an auto-generated timestamp is
 always in the filename), so re-running never overwrites a previous result. Every field you fill in

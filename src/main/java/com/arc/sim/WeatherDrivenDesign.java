@@ -15,6 +15,11 @@ public class WeatherDrivenDesign {
 
     private static final int FIN_BISECTION_ITERS = 30;
     private static final double APOGEE_TOLERANCE_M = 0.1;
+    private static final int FIN_SCAN_SAMPLES = 24;
+    private static final int STABILITY_FLOOR_BISECTION_ITERS = 22;
+    private static final double CRASH_APOGEE_THRESHOLD_M = 20.0;
+    private static final double CRASH_TIME_THRESHOLD_S = 3.0;
+    private static final double STABILITY_FLOOR_SAFETY_MARGIN_FRACTION = 0.02;
 
     private static final double[] MARGIN_SIGMA_MULTIPLIERS = {-1.0, -0.5, 0.5, 1.0};
 
@@ -219,6 +224,13 @@ public class WeatherDrivenDesign {
                     marginWindMs, mult, solvedFinHeightM, r.apogeeM, targetApogeeM, APOGEE_TOLERANCE_M, r.flightTimeS,
                     finStl.getName(), finObj.getName());
 
+            double lowFinWarnThreshold = bounds.minFinHeightM + 0.1 * (bounds.maxFinHeightM - bounds.minFinHeightM);
+            if (solvedFinHeightM <= lowFinWarnThreshold) {
+                System.out.printf("  CAUTION: this fin height (%.4f m) is close to the aerodynamic-instability floor " +
+                        "seen for this airframe (very short fins can leave the rocket understable) -- verify the " +
+                        "stability margin in OpenRocket directly before building this fin set.%n", solvedFinHeightM);
+            }
+
             return new MarginFin(marginWindMs, solvedFinHeightM, r, finStl, finObj);
         };
     }
@@ -226,26 +238,129 @@ public class WeatherDrivenDesign {
     private static double solveFinHeightOnly(SimRunner runner, TrapezoidFinSet finSet, double fixedSweepM,
                                               EnvironmentPoint env, double targetApogeeM, double initialGuessM,
                                               double loM, double hiM) {
-        double lo = loM, hi = hiM;
-        double mid = Math.max(lo, Math.min(hi, initialGuessM));
+        finSet.setSweep(fixedSweepM);
+
+        // Below some fin height, this class of airframe goes aerodynamically unstable (insufficient fin area
+        // to keep the CP behind the CG) and the rocket tumbles right off the rod instead of flying a normal
+        // trajectory -- apogee collapses to a few meters. That boundary is close to a step function (normal
+        // flight can start within a hundredth of a meter of still-crashing), so a scan across the full
+        // [loM, hiM] range can land entirely on one side or the other of it and never see the true crossing.
+        // initialGuessM is the already-solved main design's fin height, which is guaranteed to fly normally
+        // (it's the design this whole run is built around) -- use it as a known-stable anchor and binary
+        // search for the instability boundary directly, then restrict the actual apogee search to the
+        // confirmed-safe region above that floor, where the apogee-vs-height relationship is well-behaved.
+        double stableAnchorM = Math.max(loM, Math.min(hiM, initialGuessM));
+        double searchLoM = loM;
+        finSet.setHeight(stableAnchorM);
+        SimRunner.FlightResult anchorResult = runner.run(env);
+        if (isNormalFlight(anchorResult) && stableAnchorM > loM) {
+            finSet.setHeight(loM);
+            SimRunner.FlightResult atLo = runner.run(env);
+            if (!isNormalFlight(atLo)) {
+                double lo = loM, hi = stableAnchorM;
+                for (int i = 0; i < STABILITY_FLOOR_BISECTION_ITERS; i++) {
+                    if (Thread.currentThread().isInterrupted()) break;
+                    double mid = (lo + hi) / 2.0;
+                    finSet.setHeight(mid);
+                    SimRunner.FlightResult r = runner.run(env);
+                    if (isNormalFlight(r)) {
+                        hi = mid;
+                    } else {
+                        lo = mid;
+                    }
+                }
+                searchLoM = hi + (hiM - loM) * STABILITY_FLOOR_SAFETY_MARGIN_FRACTION;
+                searchLoM = Math.min(searchLoM, hiM);
+            }
+        }
+
+        // Scan the confirmed-safe sub-range to find a bracket where the apogee-vs-height trend can be
+        // trusted, then bisect within that bracket. Sample density is skewed toward the low end via a
+        // quadratic spacing (t^2), since the steepest part of the response tends to sit just above the
+        // stability floor.
+        int samples = Math.max(2, FIN_SCAN_SAMPLES);
+        double[] heights = new double[samples];
+        double[] apogees = new double[samples];
+        boolean[] ok = new boolean[samples];
+        for (int i = 0; i < samples; i++) {
+            if (Thread.currentThread().isInterrupted()) break;
+            double t = (double) i / (samples - 1);
+            double h = searchLoM + (hiM - searchLoM) * t * t * t;
+            heights[i] = h;
+            finSet.setHeight(h);
+            SimRunner.FlightResult r = runner.run(env);
+            ok[i] = r.ok;
+            apogees[i] = r.ok ? r.apogeeM : Double.NaN;
+        }
+
+        int bestIdx = -1;
+        double bestAbsErr = Double.POSITIVE_INFINITY;
+        for (int i = 0; i < samples; i++) {
+            if (!ok[i]) continue;
+            double err = Math.abs(apogees[i] - targetApogeeM);
+            if (err < bestAbsErr) {
+                bestAbsErr = err;
+                bestIdx = i;
+            }
+        }
+        if (bestIdx < 0) {
+            return Math.max(loM, Math.min(hiM, initialGuessM));
+        }
+        if (bestAbsErr <= APOGEE_TOLERANCE_M) {
+            finSet.setHeight(heights[bestIdx]);
+            return heights[bestIdx];
+        }
+
+        // Find every adjacent sample pair where apogee crosses the target (either direction -- doesn't
+        // assume taller fin always means lower apogee, since that can invert near the instability
+        // transition), then bisect within whichever crossing sits closest to the best coarse sample, since
+        // that's the physically relevant one rather than some spurious oscillation elsewhere in the range.
+        int bracketLeft = -1;
+        int bestBracketDistance = Integer.MAX_VALUE;
+        for (int i = 0; i < samples - 1; i++) {
+            if (!ok[i] || !ok[i + 1]) continue;
+            double signedI = apogees[i] - targetApogeeM;
+            double signedNext = apogees[i + 1] - targetApogeeM;
+            if (signedI == 0 || signedNext == 0 || (signedI > 0) != (signedNext > 0)) {
+                int distance = Math.min(Math.abs(i - bestIdx), Math.abs(i + 1 - bestIdx));
+                if (distance < bestBracketDistance) {
+                    bestBracketDistance = distance;
+                    bracketLeft = i;
+                }
+            }
+        }
+        if (bracketLeft < 0) {
+            finSet.setHeight(heights[bestIdx]);
+            return heights[bestIdx];
+        }
+
+        double lo = heights[bracketLeft], hi = heights[bracketLeft + 1];
+        double loResid = apogees[bracketLeft] - targetApogeeM;
+        double mid = (lo + hi) / 2.0;
         for (int i = 0; i < FIN_BISECTION_ITERS; i++) {
             if (Thread.currentThread().isInterrupted()) break;
             mid = (lo + hi) / 2.0;
             finSet.setHeight(mid);
-            finSet.setSweep(fixedSweepM);
             SimRunner.FlightResult r = runner.run(env);
             if (!r.ok) {
                 System.err.println("Sim failed at fin height=" + mid + "m (margin solve): " + r.error);
                 break;
             }
-            if (Math.abs(r.apogeeM - targetApogeeM) <= APOGEE_TOLERANCE_M) break;
-            if (r.apogeeM > targetApogeeM) {
+            double midResid = r.apogeeM - targetApogeeM;
+            if (Math.abs(midResid) <= APOGEE_TOLERANCE_M) break;
+            if ((midResid > 0) == (loResid > 0)) {
                 lo = mid;
+                loResid = midResid;
             } else {
                 hi = mid;
             }
         }
+        finSet.setHeight(mid);
         return mid;
+    }
+
+    private static boolean isNormalFlight(SimRunner.FlightResult r) {
+        return r.ok && r.apogeeM > CRASH_APOGEE_THRESHOLD_M && r.flightTimeS > CRASH_TIME_THRESHOLD_S;
     }
 
     private static boolean isAtBound(double value, double lo, double hi) {

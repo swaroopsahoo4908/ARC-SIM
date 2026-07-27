@@ -69,8 +69,9 @@ public class ArcSimGui extends JFrame {
         JTabbedPane tabs = new JTabbedPane();
         tabs.addTab("Engine 1: Full Factorial Sweep", buildFullSweepTab());
         tabs.addTab("Engine 2: Design Solver", buildDesignTab());
-        tabs.addTab("Engine 3: Geometry Export", buildGeometryExportTab());
+        tabs.addTab("Geometry Exporter", buildGeometryExportTab());
         tabs.addTab("Engine 4: Weather-Driven Design", buildWeatherTab());
+        tabs.addTab("Rocket Builder", new RocketBuilderPanel());
         tabs.addTab("Data Viewer", new DataViewerPanel());
 
         log.setEditable(false);
@@ -655,7 +656,7 @@ public class ArcSimGui extends JFrame {
             File outDir = resolveOutDir(outDirField, ork, OutputNaming.CAD_FILES_FOLDER);
             boolean doStl = stlBox.isSelected(), doObj = objBox.isSelected();
 
-            runJob("Engine 3: Geometry Export", listener -> {
+            runJob("Geometry Exporter", listener -> {
 
                 File runDir = OutputNaming.uniqueDir(ork, outDir, "geometry");
                 String base = OutputNaming.baseName(ork);
@@ -1926,8 +1927,9 @@ public class ArcSimGui extends JFrame {
                 "<h2 style='margin-bottom:0'>Arc-Sim</h2>" +
                 "<p style='margin-top:2px'>Version " + APP_VERSION + "</p>" +
                 "<p>Rocket flight simulation and design toolkit built on the OpenRocket core " +
-                "simulation engine (RK4 integration, Barrowman aerodynamics). Four engines: " +
-                "Full Factorial Sweep, Design Solver, Geometry Export, and Weather-Driven Design.</p>" +
+                "simulation engine (RK4 integration, Barrowman aerodynamics). Three engines: " +
+                "Full Factorial Sweep, Design Solver, and Weather-Driven Design. Plus a Rocket " +
+                "Builder, Geometry Exporter, and Data Viewer.</p>" +
                 "<p style='color:gray'>OpenRocket core is used under its own open-source license; " +
                 "see the project README for third-party notices.</p>" +
                 "</div></html>";

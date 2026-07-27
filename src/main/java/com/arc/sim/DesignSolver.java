@@ -24,6 +24,14 @@ public class DesignSolver {
     private static final double PATTERN_MIN_STEP_FRACTION = 1e-5;
     private static final double PATTERN_SHRINK_FACTOR = 0.5;
 
+    private static final int JOINT_NEWTON_ITERS = 12;
+    private static final int JOINT_LM_RETRIES = 6;
+    private static final double JOINT_PROBE_FRACTION = 0.015;
+    private static final double JOINT_MAX_STEP_FRACTION = 0.12;
+    private static final double JOINT_LM_INITIAL_LAMBDA = 1.0;
+    private static final double JOINT_LM_GROW = 4.0;
+    private static final double JOINT_LM_SHRINK = 0.4;
+
     public static class ComponentSelection {
         public List<MassComponent> ballastComponents;
         public Parachute parachute;
@@ -178,11 +186,10 @@ public class DesignSolver {
 
             if (!patternSearchMode) {
 
-                ballastKg = solveBallastForFlightTime(runner, ballast, finSet, finHeightM, fixedSweepM, hole, holeRadiusM,
-                        env, targetTimeMinS, targetTimeMaxS, ballastKg, bounds);
-
-                finHeightM = solveFinHeightForApogee(runner, ballast, finSet, ballastKg, fixedSweepM, hole, holeRadiusM,
-                        env, targetApogeeM, finHeightM, bounds);
+                double[] joint = jointSolveBallastAndFinHeight(runner, ballast, finSet, fixedSweepM, hole, holeRadiusM,
+                        env, targetApogeeM, targetTimeCenterS, ballastKg, finHeightM, bounds);
+                ballastKg = joint[0];
+                finHeightM = joint[1];
 
                 holeRadiusM = solveHoleRadiusForFlightTime(runner, ballast, ballastKg, finSet, finHeightM, fixedSweepM,
                         hole, env, targetTimeMinS, targetTimeMaxS, holeRadiusM, bounds);
@@ -363,64 +370,129 @@ public class DesignSolver {
         return new Result(ballastKg, finHeightM, holeRadiusM, fixedSweepM, check, apogeeOk, timeOk, outFile);
     }
 
-    private static double solveFinHeightForApogee(SimRunner runner, RocketComponents.BallastControl ballast, TrapezoidFinSet finSet,
-                                                    double ballastKg, double fixedSweepM,
-                                                    RocketComponents.ParachuteHoleControl hole, double holeRadiusM,
-                                                    EnvironmentPoint env, double targetApogeeM, double initialGuessM, Bounds bounds) {
-        ballast.setTotalKg(ballastKg);
+    private static double[] jointSolveBallastAndFinHeight(SimRunner runner, RocketComponents.BallastControl ballast,
+                                                             TrapezoidFinSet finSet, double fixedSweepM,
+                                                             RocketComponents.ParachuteHoleControl hole, double holeRadiusM,
+                                                             EnvironmentPoint env, double targetApogeeM, double targetTimeCenterS,
+                                                             double initialBallastKg, double initialFinHeightM, Bounds bounds) {
         finSet.setSweep(fixedSweepM);
         hole.setHoleRadiusM(holeRadiusM);
-        double lo = bounds.minFinHeightM, hi = bounds.maxFinHeightM;
 
-        double mid = clamp(initialGuessM, lo, hi);
-        for (int i = 0; i < MAX_BISECTION_ITERS; i++) {
+        double bRange = bounds.maxBallastKg - bounds.minBallastKg;
+        double fRange = bounds.maxFinHeightM - bounds.minFinHeightM;
+        double b = clamp(initialBallastKg, bounds.minBallastKg, bounds.maxBallastKg);
+        double f = clamp(initialFinHeightM, bounds.minFinHeightM, bounds.maxFinHeightM);
+        if (bRange <= 0 || fRange <= 0) return new double[]{b, f};
+
+        double hB = Math.max(bRange * JOINT_PROBE_FRACTION, 1e-4);
+        double hF = Math.max(fRange * JOINT_PROBE_FRACTION, 1e-5);
+        double maxStepB = Math.max(hB * 6, bRange * JOINT_MAX_STEP_FRACTION);
+        double maxStepF = Math.max(hF * 6, fRange * JOINT_MAX_STEP_FRACTION);
+        double lambda = JOINT_LM_INITIAL_LAMBDA;
+
+        for (int iter = 0; iter < JOINT_NEWTON_ITERS; iter++) {
             if (Thread.currentThread().isInterrupted()) break;
-            mid = (lo + hi) / 2.0;
-            finSet.setHeight(mid);
-            SimRunner.FlightResult r = runner.run(env);
-            if (!r.ok) {
-                System.err.println("Sim failed at fin height=" + mid + "m: " + r.error);
-                break;
+
+            ballast.setTotalKg(b);
+            finSet.setHeight(f);
+            SimRunner.FlightResult base = runner.run(env);
+            if (!base.ok) break;
+            double r1 = (base.apogeeM - targetApogeeM) / APOGEE_TOLERANCE_M;
+            double r2 = (base.flightTimeS - targetTimeCenterS) / TIME_TOLERANCE_S;
+            double cost0 = r1 * r1 + r2 * r2;
+            if (Math.abs(base.apogeeM - targetApogeeM) <= APOGEE_TOLERANCE_M
+                    && Math.abs(base.flightTimeS - targetTimeCenterS) <= TIME_TOLERANCE_S) break;
+
+            double bPert = clamp(b + hB, bounds.minBallastKg, bounds.maxBallastKg);
+            double stepB = bPert - b;
+            if (Math.abs(stepB) < 1e-9) {
+                bPert = clamp(b - hB, bounds.minBallastKg, bounds.maxBallastKg);
+                stepB = bPert - b;
             }
-            if (Math.abs(r.apogeeM - targetApogeeM) <= APOGEE_TOLERANCE_M) break;
-            if (r.apogeeM > targetApogeeM) {
-                lo = mid;
-            } else {
-                hi = mid;
+            double fPert = clamp(f + hF, bounds.minFinHeightM, bounds.maxFinHeightM);
+            double stepF = fPert - f;
+            if (Math.abs(stepF) < 1e-9) {
+                fPert = clamp(f - hF, bounds.minFinHeightM, bounds.maxFinHeightM);
+                stepF = fPert - f;
             }
+            if (Math.abs(stepB) < 1e-9 && Math.abs(stepF) < 1e-9) break;
+
+            double j11 = 0, j21 = 0;
+            if (Math.abs(stepB) >= 1e-9) {
+                ballast.setTotalKg(bPert);
+                finSet.setHeight(f);
+                SimRunner.FlightResult rb = runner.run(env);
+                if (rb.ok) {
+                    j11 = ((rb.apogeeM - base.apogeeM) / stepB) / APOGEE_TOLERANCE_M;
+                    j21 = ((rb.flightTimeS - base.flightTimeS) / stepB) / TIME_TOLERANCE_S;
+                }
+            }
+
+            double j12 = 0, j22 = 0;
+            if (Math.abs(stepF) >= 1e-9) {
+                ballast.setTotalKg(b);
+                finSet.setHeight(fPert);
+                SimRunner.FlightResult rf = runner.run(env);
+                if (rf.ok) {
+                    j12 = ((rf.apogeeM - base.apogeeM) / stepF) / APOGEE_TOLERANCE_M;
+                    j22 = ((rf.flightTimeS - base.flightTimeS) / stepF) / TIME_TOLERANCE_S;
+                }
+            }
+            ballast.setTotalKg(b);
+            finSet.setHeight(f);
+
+            // Normal equations for weighted least squares: (J^T J + lambda * diag(J^T J)) * delta = -J^T r
+            double a11 = j11 * j11 + j21 * j21;
+            double a12 = j11 * j12 + j21 * j22;
+            double a22 = j12 * j12 + j22 * j22;
+            double g1 = j11 * r1 + j21 * r2;
+            double g2 = j12 * r1 + j22 * r2;
+
+            boolean improved = false;
+            for (int retry = 0; retry < JOINT_LM_RETRIES; retry++) {
+                double m11 = a11 * (1.0 + lambda) + 1e-12;
+                double m22 = a22 * (1.0 + lambda) + 1e-12;
+                double det = m11 * m22 - a12 * a12;
+                if (Math.abs(det) < 1e-12) {
+                    lambda *= JOINT_LM_GROW;
+                    continue;
+                }
+                double deltaB = (-g1 * m22 + g2 * a12) / det;
+                double deltaF = (-g2 * m11 + g1 * a12) / det;
+                deltaB = clampAbs(deltaB, maxStepB);
+                deltaF = clampAbs(deltaF, maxStepF);
+
+                double bTrial = clamp(b + deltaB, bounds.minBallastKg, bounds.maxBallastKg);
+                double fTrial = clamp(f + deltaF, bounds.minFinHeightM, bounds.maxFinHeightM);
+                ballast.setTotalKg(bTrial);
+                finSet.setHeight(fTrial);
+                SimRunner.FlightResult trial = runner.run(env);
+                if (trial.ok) {
+                    double t1 = (trial.apogeeM - targetApogeeM) / APOGEE_TOLERANCE_M;
+                    double t2 = (trial.flightTimeS - targetTimeCenterS) / TIME_TOLERANCE_S;
+                    double costTrial = t1 * t1 + t2 * t2;
+                    if (costTrial < cost0) {
+                        b = bTrial;
+                        f = fTrial;
+                        lambda *= JOINT_LM_SHRINK;
+                        improved = true;
+                        break;
+                    }
+                }
+                ballast.setTotalKg(b);
+                finSet.setHeight(f);
+                lambda *= JOINT_LM_GROW;
+            }
+            if (!improved) break;
         }
-        return mid;
+
+        ballast.setTotalKg(b);
+        finSet.setHeight(f);
+        return new double[]{b, f};
     }
 
-    private static double solveBallastForFlightTime(SimRunner runner, RocketComponents.BallastControl ballast, TrapezoidFinSet finSet,
-                                                      double finHeightM, double fixedSweepM,
-                                                      RocketComponents.ParachuteHoleControl hole, double holeRadiusM,
-                                                      EnvironmentPoint env, double targetTimeMinS, double targetTimeMaxS,
-                                                      double initialGuessKg, Bounds bounds) {
-        finSet.setHeight(finHeightM);
-        finSet.setSweep(fixedSweepM);
-        hole.setHoleRadiusM(holeRadiusM);
-        double targetMid = (targetTimeMinS + targetTimeMaxS) / 2.0;
-        double lo = bounds.minBallastKg, hi = bounds.maxBallastKg;
-
-        double mid = clamp(initialGuessKg, lo, hi);
-        for (int i = 0; i < MAX_BISECTION_ITERS; i++) {
-            if (Thread.currentThread().isInterrupted()) break;
-            mid = (lo + hi) / 2.0;
-            ballast.setTotalKg(mid);
-            SimRunner.FlightResult r = runner.run(env);
-            if (!r.ok) {
-                System.err.println("Sim failed at ballast=" + mid + "kg: " + r.error);
-                break;
-            }
-            if (r.flightTimeS >= targetTimeMinS && r.flightTimeS <= targetTimeMaxS) break;
-            if (r.flightTimeS > targetMid) {
-                lo = mid;
-            } else {
-                hi = mid;
-            }
-        }
-        return mid;
+    private static double clampAbs(double v, double cap) {
+        return Math.max(-cap, Math.min(cap, v));
     }
 
     private static double solveHoleRadiusForFlightTime(SimRunner runner, RocketComponents.BallastControl ballast, double ballastKg,

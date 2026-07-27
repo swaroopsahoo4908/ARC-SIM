@@ -29,7 +29,7 @@ public class Main {
         System.out.println("    java -jar arc-sim.jar design <input.ork> <targetApogeeM> <targetTimeMinS> <targetTimeMaxS> \\");
         System.out.println("        <site> <windAvgMs> <windStdDevMs> <turbulencePct> <windDirDeg> <tempC> <pressureMbar>");
         System.out.println();
-        System.out.println("  Engines 3 (geometry export) and 4 (weather-driven design) are GUI-only -- no CLI command.");
+        System.out.println("  Engine 4 (weather-driven design), the Geometry Exporter, and the Rocket Builder are GUI-only -- no CLI command.");
         System.out.println();
         System.out.println("  site = MDRA_SOD_FARM | SPAAR_LANCASTER");
         System.out.println();
