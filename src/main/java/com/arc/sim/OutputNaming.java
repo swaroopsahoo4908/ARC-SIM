@@ -9,7 +9,7 @@ public class OutputNaming {
     public static final String FULL_FACTORIAL_FOLDER = "Full Factorial";
     public static final String OPENROCKET_SOLVES_FOLDER = "OpenRocket Solves";
     public static final String CAD_FILES_FOLDER = "CAD Files";
-    public static final String ENGINE_4_FOLDER = "Engine 4";
+    public static final String ENGINE_3_FOLDER = "Engine 3";
     public static final String ROCKET_BUILDER_FOLDER = "Rocket Builder";
     public static final String OPENROCKET_ROOT_FOLDER = "OpenRocket";
 

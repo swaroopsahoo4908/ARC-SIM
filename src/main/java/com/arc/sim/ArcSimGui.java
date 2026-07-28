@@ -69,8 +69,8 @@ public class ArcSimGui extends JFrame {
         JTabbedPane tabs = new JTabbedPane();
         tabs.addTab("Engine 1: Full Factorial Sweep", buildFullSweepTab());
         tabs.addTab("Engine 2: Design Solver", buildDesignTab());
+        tabs.addTab("Engine 3: Weather-Driven Design", buildWeatherTab());
         tabs.addTab("Geometry Exporter", buildGeometryExportTab());
-        tabs.addTab("Engine 4: Weather-Driven Design", buildWeatherTab());
         tabs.addTab("Rocket Builder", new RocketBuilderPanel());
         tabs.addTab("Data Viewer", new DataViewerPanel());
 
@@ -593,6 +593,7 @@ public class ArcSimGui extends JFrame {
         JTextField orkField = new JTextField();
         JButton loadButton = new JButton("Load Rocket");
         RocketPreviewPanel previewPanel = new RocketPreviewPanel();
+        previewPanel.setShowPointMasses(false);
         previewPanel.setPreferredSize(new Dimension(880, 180));
         previewPanel.setBorder(BorderFactory.createTitledBorder("Rocket preview (approximate schematic, not to-scale CAD)"));
 
@@ -830,6 +831,7 @@ public class ArcSimGui extends JFrame {
         finSetCombo.setEnabled(false);
 
         RocketPreviewPanel previewPanel = new RocketPreviewPanel();
+        previewPanel.setShowPointMasses(false);
         previewPanel.setPreferredSize(new Dimension(880, 160));
         previewPanel.setBorder(BorderFactory.createTitledBorder("Rocket preview (approximate schematic, not to-scale CAD)"));
 
@@ -864,7 +866,7 @@ public class ArcSimGui extends JFrame {
                 appendLog(String.format("Inspected %s: found %d mass component(s), %d parachute(s), %d trapezoidal fin set(s).%n",
                         ork.getName(), masses.size(), chutes.size(), fins.size()));
                 if (fins.isEmpty()) {
-                    appendLog("WARNING: no trapezoidal fin sets found -- Engine 4 needs one, same as Engine 2.\n");
+                    appendLog("WARNING: no trapezoidal fin sets found -- Engine 3 needs one, same as Engine 2.\n");
                 }
             } catch (Exception ex) {
                 JOptionPane.showMessageDialog(this, "Could not inspect rocket: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
@@ -924,7 +926,7 @@ public class ArcSimGui extends JFrame {
         JTextField outDirField = new JTextField();
         bindPersistentText("engine4.outDir", outDirField);
         FormBuilder outputForm = new FormBuilder();
-        outputForm.addDirRow("Output folder (blank = \"" + OutputNaming.ENGINE_4_FOLDER + "\" next to the rocket file):", outDirField);
+        outputForm.addDirRow("Output folder (blank = \"" + OutputNaming.ENGINE_3_FOLDER + "\" next to the rocket file):", outDirField);
         outputForm.addRow("", hintLabel("Each run gets its own new subfolder (&lt;rocketName&gt;_weatherdesign_&lt;timestamp&gt;/) " +
                 "inside the output folder above -- the solved .ork, both CAD exports, the local sweep .xlsx, and all " +
                 "four margin fin CAD pairs land together in that one run subfolder."));
@@ -984,7 +986,7 @@ public class ArcSimGui extends JFrame {
 
             SimRunner runner = inspectedRunner[0];
             File ork = new File(orkField.getText().trim());
-            File outDir = resolveOutDir(outDirField, ork, OutputNaming.ENGINE_4_FOLDER);
+            File outDir = resolveOutDir(outDirField, ork, OutputNaming.ENGINE_3_FOLDER);
             int sweepSamples = (Integer) localSweepSamples.getValue();
 
             WeatherClient.Reading base = weatherClient.cachedReading();
@@ -998,7 +1000,7 @@ public class ArcSimGui extends JFrame {
             mainLeaderboard.clear();
             localLeaderboard.clear();
             engine4EtaLabel.setText("Starting...");
-            runJob("Engine 4: Weather-Driven Design", listener -> {
+            runJob("Engine 3: Weather-Driven Design", listener -> {
                 ProgressListener combined = (processed, total, etaSeconds) -> {
                     listener.onProgress(processed, total, etaSeconds);
                     SwingUtilities.invokeLater(() -> {
@@ -1031,7 +1033,7 @@ public class ArcSimGui extends JFrame {
 
         reportButton.addActionListener(e -> {
             if (lastResult[0] == null) return;
-            runJob("Engine 4: Generate PDF Report", listener -> {
+            runJob("Engine 3: Generate PDF Report", listener -> {
                 File runDir = lastResult[0].runDir != null ? lastResult[0].runDir : AppConfig.appDir();
                 File reportPdf = new File(runDir, "weather_design_report.pdf");
                 ReportGenerator.generateWeatherDesignReport(lastResult[0], lastWeather[0],
@@ -1889,7 +1891,7 @@ public class ArcSimGui extends JFrame {
         gc.gridwidth = 1;
         row++;
 
-        JLabel hint = new JLabel("<html><font color=gray>Used by Engine 4 (live weather) and " +
+        JLabel hint = new JLabel("<html><font color=gray>Used by Engine 3 (live weather) and " +
                 "\"Use Current Location\". Get a free key at weatherapi.com &mdash; you can skip " +
                 "this and set it later via File &gt; Preferences.</font></html>");
         gc.gridx = 0; gc.gridy = ++row; gc.gridwidth = 2;

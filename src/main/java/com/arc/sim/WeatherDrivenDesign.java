@@ -109,7 +109,7 @@ public class WeatherDrivenDesign {
         result.effectiveBounds = bounds;
         result.mainSolveWidenAttempts = mainWidenAttempts;
         if (mainSolve == null) {
-            System.out.println("Main solve was cancelled before any pass completed -- stopping Engine 4 here.");
+            System.out.println("Main solve was cancelled before any pass completed -- stopping Engine 3 here.");
             return result;
         }
 

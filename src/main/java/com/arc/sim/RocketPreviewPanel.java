@@ -9,10 +9,16 @@ public class RocketPreviewPanel extends JPanel {
 
     private RocketGeometryExtractor.Geometry geometry;
     private String rocketName = "";
+    private boolean showPointMasses = true;
 
     public void setGeometry(RocketGeometryExtractor.Geometry geometry, String rocketName) {
         this.geometry = geometry;
         this.rocketName = rocketName;
+        repaint();
+    }
+
+    public void setShowPointMasses(boolean showPointMasses) {
+        this.showPointMasses = showPointMasses;
         repaint();
     }
 
@@ -119,7 +125,7 @@ public class RocketPreviewPanel extends JPanel {
             g.drawRect(cx - halfLen, bodyTop - protrusion, rectW, protrusion);
         }
 
-        if (!geometry.pointMasses.isEmpty()) {
+        if (showPointMasses && !geometry.pointMasses.isEmpty()) {
             int bodyBottom = centerY + (int) (geometry.maxRadius * scale);
             int tickBaseY = Math.min(getHeight() - 46, bodyBottom + 16);
             g.setFont(g.getFont().deriveFont(9f));

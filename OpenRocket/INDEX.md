@@ -26,12 +26,12 @@ so nothing here ever gets clobbered by a later run.
 | `Full Factorial/` | Engine 1 (Full Factorial Sweep) | `<rocket>_fullfactorial_<timestamp>.parquet` + companion `_summary.csv` |
 | `OpenRocket Solves/` | Engine 2 (Design Solver), run standalone | `<rocket>_solved_<timestamp>.ork` |
 | `CAD Files/` | Geometry Exporter | One `<rocket>_geometry_<timestamp>/` folder per run, each with `.stl` + `.obj` |
-| `Engine 4/` | Engine 4 (Weather-Driven Design) | One `<rocket>_weatherdesign_<timestamp>/` folder per run, each with its own solved `.ork`, main CAD `.stl`/`.obj`, a local-conditions `.xlsx`, and 4 margin fin-set `.stl`/`.obj` pairs |
+| `Engine 3/` | Engine 3 (Weather-Driven Design) | One `<rocket>_weatherdesign_<timestamp>/` folder per run, each with its own solved `.ork`, main CAD `.stl`/`.obj`, a local-conditions `.xlsx`, and 4 margin fin-set `.stl`/`.obj` pairs |
 | `Rocket Builder/` | Rocket Builder | New from-scratch `.ork` designs, saved wherever/whenever you choose to "Save As" -- filenames aren't auto-timestamped since it's an editor, not a batch tool, so name them yourself (this folder is just the default starting point the first time you save a never-before-saved rocket in a session). |
 
 Note: a Design Solver run launched directly from Engine 2's tab lands in `OpenRocket Solves/`; a
-solve run as *step 1* of an Engine 4 pipeline instead lands inside that run's own
-`Engine 4/<rocket>_weatherdesign_<timestamp>/` folder alongside the rest of that pipeline's output
+solve run as *step 1* of an Engine 3 pipeline instead lands inside that run's own
+`Engine 3/<rocket>_weatherdesign_<timestamp>/` folder alongside the rest of that pipeline's output
 — check both if you're hunting for a particular solved design.
 
 ### Latest standalone solve (`OpenRocket Solves/`)
@@ -40,9 +40,9 @@ solve run as *step 1* of an Engine 4 pipeline instead lands inside that run's ow
 `_solved_YYYYMMDD_HHMMSS` suffix are timestamped solver outputs; sort by timestamp for the current
 best.
 
-### Latest Engine 4 pipeline run
+### Latest Engine 3 pipeline run
 
-`Engine 4/CSWARCMOD1E_weatherdesign_20260723_182208/` is the most recent end-to-end weather-driven
+`Engine 3/CSWARCMOD1E_weatherdesign_20260727_131209/` is the most recent end-to-end weather-driven
 run, with its own solved `.ork`, CAD, local-conditions sweep, and margin fin sets.
 
 > Always open the latest solved `.ork` in OpenRocket 23.09+ to verify the stability margin
