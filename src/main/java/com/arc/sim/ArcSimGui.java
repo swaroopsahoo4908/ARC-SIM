@@ -171,19 +171,18 @@ public class ArcSimGui extends JFrame {
 
         presetCombo.addActionListener(e -> {
             int[][] presets = {
-
                     {5, 3, 3, 8, 5, 3, 3},
                     {45, 7, 7, 36, 11, 7, 3},
                     {90, 7, 7, 72, 11, 7, 3},
             };
-            int[] p = presets[presetCombo.getSelectedIndex()];
-            windAvgAxis.min.setValue(0.0); windAvgAxis.max.setValue(22.0); windAvgAxis.count.setValue(p[0]);
-            windStdDevAxis.min.setValue(0.0); windStdDevAxis.max.setValue(6.0); windStdDevAxis.count.setValue(p[1]);
-            turbulenceAxis.min.setValue(0.0); turbulenceAxis.max.setValue(60.0); turbulenceAxis.count.setValue(p[2]);
-            windDirAxis.min.setValue(0.0); windDirAxis.max.setValue(350.0); windDirAxis.count.setValue(p[3]);
-            tempAxis.min.setValue(-10.0); tempAxis.max.setValue(40.0); tempAxis.count.setValue(p[4]);
-            pressureAxis.min.setValue(970.0); pressureAxis.max.setValue(1030.0); pressureAxis.count.setValue(p[5]);
-            rodAngleAxis.min.setValue(0.0); rodAngleAxis.max.setValue(6.0); rodAngleAxis.count.setValue(p[6]);
+            int[] counts = presets[presetCombo.getSelectedIndex()];
+            windAvgAxis.min.setValue(0.0); windAvgAxis.max.setValue(22.0); windAvgAxis.count.setValue(counts[0]);
+            windStdDevAxis.min.setValue(0.0); windStdDevAxis.max.setValue(6.0); windStdDevAxis.count.setValue(counts[1]);
+            turbulenceAxis.min.setValue(0.0); turbulenceAxis.max.setValue(60.0); turbulenceAxis.count.setValue(counts[2]);
+            windDirAxis.min.setValue(0.0); windDirAxis.max.setValue(350.0); windDirAxis.count.setValue(counts[3]);
+            tempAxis.min.setValue(-10.0); tempAxis.max.setValue(40.0); tempAxis.count.setValue(counts[4]);
+            pressureAxis.min.setValue(970.0); pressureAxis.max.setValue(1030.0); pressureAxis.count.setValue(counts[5]);
+            rodAngleAxis.min.setValue(0.0); rodAngleAxis.max.setValue(6.0); rodAngleAxis.count.setValue(counts[6]);
             appendLog("Applied \"" + presetCombo.getSelectedItem() + "\" grid preset.\n");
         });
 
@@ -379,23 +378,23 @@ public class ArcSimGui extends JFrame {
     }
 
     private static void saveAxisRangesToConfig(File configFile, AxisFields[] axes, List<String> siteSpecs) throws Exception {
-        java.util.Properties p = new java.util.Properties();
+        java.util.Properties props = new java.util.Properties();
         if (configFile.exists()) {
             try (java.io.FileInputStream in = new java.io.FileInputStream(configFile)) {
-                p.load(in);
+                props.load(in);
             }
         }
         for (AxisFields a : axes) {
             GridAxis g = a.toGridAxis();
-            p.setProperty(a.propKey + ".min", String.valueOf(g.min));
-            p.setProperty(a.propKey + ".max", String.valueOf(g.max));
-            p.setProperty(a.propKey + ".step", String.valueOf(g.step));
+            props.setProperty(a.propKey + ".min", String.valueOf(g.min));
+            props.setProperty(a.propKey + ".max", String.valueOf(g.max));
+            props.setProperty(a.propKey + ".step", String.valueOf(g.step));
         }
-        p.setProperty("sites", String.join(",", siteSpecs));
-        p.setProperty("maxCombosSafety", p.getProperty("maxCombosSafety", "50000000"));
-        p.setProperty("threads", p.getProperty("threads", String.valueOf(Runtime.getRuntime().availableProcessors())));
+        props.setProperty("sites", String.join(",", siteSpecs));
+        props.setProperty("maxCombosSafety", props.getProperty("maxCombosSafety", "50000000"));
+        props.setProperty("threads", props.getProperty("threads", String.valueOf(Runtime.getRuntime().availableProcessors())));
         try (java.io.FileOutputStream out = new java.io.FileOutputStream(configFile)) {
-            p.store(out, "Full-factorial sweep grid for FullFactorialSweep (Engine 1).");
+            props.store(out, "Full-factorial sweep grid for FullFactorialSweep (Engine 1).");
         }
     }
 
@@ -657,7 +656,6 @@ public class ArcSimGui extends JFrame {
             boolean doStl = stlBox.isSelected(), doObj = objBox.isSelected();
 
             runJob("Geometry Exporter", listener -> {
-
                 File runDir = OutputNaming.uniqueDir(ork, outDir, "geometry");
                 String base = OutputNaming.baseName(ork);
                 List<MeshExporter.Triangle> tris = MeshExporter.buildMesh(geo);
@@ -1473,9 +1471,7 @@ public class ArcSimGui extends JFrame {
             if (Desktop.isDesktopSupported() && f.getParentFile() != null) {
                 Desktop.getDesktop().open(f.getParentFile());
             }
-        } catch (Exception ignored) {
-
-        }
+        } catch (Exception ignored) {}
     }
 
     private void openDirectory(File dir) {
@@ -1483,9 +1479,7 @@ public class ArcSimGui extends JFrame {
             if (Desktop.isDesktopSupported()) {
                 Desktop.getDesktop().open(dir);
             }
-        } catch (Exception ignored) {
-
-        }
+        } catch (Exception ignored) {}
     }
 
     private void editPropertiesFile(File file) {
@@ -1494,9 +1488,9 @@ public class ArcSimGui extends JFrame {
             JTextArea editor = new JTextArea(content, 28, 70);
             editor.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
             JScrollPane scroll = new JScrollPane(editor);
-            int result = JOptionPane.showConfirmDialog(this, scroll, "Edit " + file.getName(),
+            int choice = JOptionPane.showConfirmDialog(this, scroll, "Edit " + file.getName(),
                     JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
-            if (result == JOptionPane.OK_OPTION) {
+            if (choice == JOptionPane.OK_OPTION) {
                 Files.write(file.toPath(), editor.getText().getBytes(StandardCharsets.UTF_8));
                 appendLog("Saved " + file.getAbsolutePath() + "\n");
             }
@@ -1529,8 +1523,8 @@ public class ArcSimGui extends JFrame {
             browse.addActionListener(e -> {
                 JFileChooser chooser = new JFileChooser(lastDir);
                 chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
-                int result = chooser.showOpenDialog(ArcSimGui.this);
-                if (result == JFileChooser.APPROVE_OPTION) {
+                int picked = chooser.showOpenDialog(ArcSimGui.this);
+                if (picked == JFileChooser.APPROVE_OPTION) {
                     File f = chooser.getSelectedFile();
                     field.setText(f.getPath());
                     lastDir = f;
@@ -1572,8 +1566,8 @@ public class ArcSimGui extends JFrame {
             browse.addActionListener(e -> {
                 JFileChooser chooser = new JFileChooser(lastDir);
                 chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter(filterDesc, ext));
-                int result = open ? chooser.showOpenDialog(ArcSimGui.this) : chooser.showSaveDialog(ArcSimGui.this);
-                if (result == JFileChooser.APPROVE_OPTION) {
+                int picked = open ? chooser.showOpenDialog(ArcSimGui.this) : chooser.showSaveDialog(ArcSimGui.this);
+                if (picked == JFileChooser.APPROVE_OPTION) {
                     File f = chooser.getSelectedFile();
                     if (!open && !f.getName().toLowerCase().endsWith("." + ext)) {
                         f = new File(f.getParentFile(), f.getName() + "." + ext);
@@ -1775,7 +1769,6 @@ public class ArcSimGui extends JFrame {
     }
 
     private static void fixTextComponentClipboardShortcuts() {
-
         int shortcut;
         try {
             shortcut = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
@@ -1788,9 +1781,9 @@ public class ArcSimGui extends JFrame {
                 "TextPane.focusInputMap"
         };
         for (String key : inputMapKeys) {
-            Object value = UIManager.get(key);
-            if (!(value instanceof InputMap)) continue;
-            InputMap im = (InputMap) value;
+            Object entry = UIManager.get(key);
+            if (!(entry instanceof InputMap)) continue;
+            InputMap im = (InputMap) entry;
             im.put(KeyStroke.getKeyStroke(KeyEvent.VK_C, shortcut), DefaultEditorKit.copyAction);
             im.put(KeyStroke.getKeyStroke(KeyEvent.VK_V, shortcut), DefaultEditorKit.pasteAction);
             im.put(KeyStroke.getKeyStroke(KeyEvent.VK_X, shortcut), DefaultEditorKit.cutAction);
@@ -1817,9 +1810,7 @@ public class ArcSimGui extends JFrame {
                     taskbar.setIconImage(icon);
                 }
             }
-        } catch (UnsupportedOperationException | SecurityException ignored) {
-
-        }
+        } catch (UnsupportedOperationException | SecurityException ignored) {}
     }
 
     private JMenuBar buildMenuBar() {
@@ -1851,7 +1842,6 @@ public class ArcSimGui extends JFrame {
     private void openQuickstartGuide() {
         File guide = new File(lastDir, "QUICKSTART.md");
         if (!guide.isFile()) {
-
             File candidate = new File(AppConfig.appDir(), "QUICKSTART.md");
             if (candidate.isFile()) guide = candidate;
         }
@@ -1907,16 +1897,15 @@ public class ArcSimGui extends JFrame {
 
         String title = firstRun ? "Arc-Sim -- First-Run Setup" : "Preferences";
         String[] options = firstRun ? new String[]{"Get Started"} : new String[]{"OK", "Cancel"};
-        int result = JOptionPane.showOptionDialog(parent, form, title, JOptionPane.DEFAULT_OPTION,
+        int choice = JOptionPane.showOptionDialog(parent, form, title, JOptionPane.DEFAULT_OPTION,
                 JOptionPane.PLAIN_MESSAGE, null, options, options[0]);
 
-        boolean accepted = result == 0;
+        boolean accepted = choice == 0;
         if (accepted) {
             cfg.weatherApiKey = apiKeyField.getText().trim();
             cfg.firstRunComplete = true;
             cfg.save();
         } else if (firstRun) {
-
             cfg.firstRunComplete = true;
             cfg.save();
         }
@@ -1938,9 +1927,7 @@ public class ArcSimGui extends JFrame {
     }
 
     public static void main(String[] args) {
-
         System.setProperty("log4j2.loggerContextFactory", "org.apache.logging.log4j.simple.SimpleLoggerContextFactory");
-
         installDockIcon(loadAppIcon());
         if (!AppConfig.get().firstRunComplete) {
             SwingUtilities.invokeLater(() -> {

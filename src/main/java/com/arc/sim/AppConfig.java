@@ -45,12 +45,10 @@ public class AppConfig {
 
     private static File resolveAppDir() {
         try {
-            File location = new File(AppConfig.class.getProtectionDomain().getCodeSource().getLocation().toURI());
-
-            File dir = location.isFile() ? location.getParentFile() : location;
+            File jarLocation = new File(AppConfig.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+            File dir = jarLocation.isFile() ? jarLocation.getParentFile() : jarLocation;
             if (dir != null && dir.isDirectory()) return dir;
         } catch (Exception ignored) {
-
         }
         return new File(System.getProperty("user.dir"));
     }
@@ -60,7 +58,6 @@ public class AppConfig {
         File source = CONFIG_FILE;
         boolean migrating = false;
         if (!source.isFile()) {
-
             File legacy = new File(new File(System.getProperty("user.home"), ".arc-sim"), "config.properties");
             if (legacy.isFile()) {
                 source = legacy;
@@ -69,18 +66,17 @@ public class AppConfig {
         }
         if (source.isFile()) {
             try (FileInputStream in = new FileInputStream(source)) {
-                Properties p = new Properties();
-                p.load(in);
-                cfg.weatherApiKey = p.getProperty("weatherApiKey", cfg.weatherApiKey);
-                cfg.firstRunComplete = Boolean.parseBoolean(p.getProperty("firstRunComplete", "false"));
-                for (String name : p.stringPropertyNames()) {
+                Properties props = new Properties();
+                props.load(in);
+                cfg.weatherApiKey = props.getProperty("weatherApiKey", cfg.weatherApiKey);
+                cfg.firstRunComplete = Boolean.parseBoolean(props.getProperty("firstRunComplete", "false"));
+                for (String name : props.stringPropertyNames()) {
                     if (name.startsWith(FIELD_PREFIX)) {
-                        cfg.fields.put(name.substring(FIELD_PREFIX.length()), p.getProperty(name));
+                        cfg.fields.put(name.substring(FIELD_PREFIX.length()), props.getProperty(name));
                     }
                 }
                 if (migrating) {
                     cfg.save();
-
                     source.delete();
                 }
             } catch (Exception e) {
@@ -93,14 +89,14 @@ public class AppConfig {
 
     public void save() {
         try {
-            Properties p = new Properties();
-            p.setProperty("weatherApiKey", weatherApiKey == null ? "" : weatherApiKey);
-            p.setProperty("firstRunComplete", String.valueOf(firstRunComplete));
+            Properties props = new Properties();
+            props.setProperty("weatherApiKey", weatherApiKey == null ? "" : weatherApiKey);
+            props.setProperty("firstRunComplete", String.valueOf(firstRunComplete));
             for (Map.Entry<String, String> e : fields.entrySet()) {
-                p.setProperty(FIELD_PREFIX + e.getKey(), e.getValue());
+                props.setProperty(FIELD_PREFIX + e.getKey(), e.getValue());
             }
             try (FileOutputStream out = new FileOutputStream(CONFIG_FILE)) {
-                p.store(out, "arc-sim configuration -- safe to hand-edit or delete (deleting re-triggers " +
+                props.store(out, "arc-sim configuration -- safe to hand-edit or delete (deleting re-triggers " +
                         "the first-run setup wizard). Kept next to the app so the whole folder stays " +
                         "self-contained and portable.");
             }

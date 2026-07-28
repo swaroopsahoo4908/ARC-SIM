@@ -106,36 +106,36 @@ public class MiniParquet {
         }
 
         private static byte[] encodePlain(ColType type, List<Object> values) throws IOException {
-            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            ByteArrayOutputStream buf = new ByteArrayOutputStream();
             switch (type) {
                 case DOUBLE: {
                     for (Object v : values) {
                         double d = (v == null) ? Double.NaN : ((Number) v).doubleValue();
-                        writeLongLE(bos, Double.doubleToLongBits(d));
+                        writeLongLE(buf, Double.doubleToLongBits(d));
                     }
                     break;
                 }
                 case BOOLEAN: {
-                    int nBytes = (values.size() + 7) / 8;
-                    byte[] packed = new byte[nBytes];
+                    int byteCount = (values.size() + 7) / 8;
+                    byte[] packed = new byte[byteCount];
                     for (int i = 0; i < values.size(); i++) {
-                        boolean b = values.get(i) != null && (Boolean) values.get(i);
-                        if (b) packed[i / 8] |= (1 << (i % 8));
+                        boolean flag = values.get(i) != null && (Boolean) values.get(i);
+                        if (flag) packed[i / 8] |= (1 << (i % 8));
                     }
-                    bos.write(packed);
+                    buf.write(packed);
                     break;
                 }
                 case STRING: {
                     for (Object v : values) {
                         String s = (v == null) ? "" : v.toString();
                         byte[] utf8 = s.getBytes(StandardCharsets.UTF_8);
-                        writeIntLE(bos, utf8.length);
-                        bos.write(utf8);
+                        writeIntLE(buf, utf8.length);
+                        buf.write(utf8);
                     }
                     break;
                 }
             }
-            return bos.toByteArray();
+            return buf.toByteArray();
         }
 
         private static void writePageHeader(TCompactWriter w, int uncompressedSize, int compressedSize, int numValues) throws IOException {
@@ -284,10 +284,10 @@ public class MiniParquet {
             long length = raf.length();
             if (length < 12) throw new IOException("Not a valid Parquet file (too small): " + file);
 
-            byte[] magicHead = new byte[4];
+            byte[] magic = new byte[4];
             raf.seek(0);
-            raf.readFully(magicHead);
-            if (!"PAR1".equals(new String(magicHead, StandardCharsets.US_ASCII))) {
+            raf.readFully(magic);
+            if (!"PAR1".equals(new String(magic, StandardCharsets.US_ASCII))) {
                 throw new IOException("Not a valid Parquet file (missing PAR1 header magic): " + file);
             }
 
@@ -317,13 +317,13 @@ public class MiniParquet {
             List<Object[]> rows = new ArrayList<>();
             outer:
             for (RowGroupMeta rg : meta.rowGroups) {
-                int rgRows = (int) rg.numRows;
+                int rowsInGroup = (int) rg.numRows;
                 Object[][] colValues = new Object[rg.columns.size()][];
                 for (int c = 0; c < rg.columns.size(); c++) {
                     ColumnChunkMeta cc = rg.columns.get(c);
                     colValues[c] = readColumnPage(raf, cc, types.get(c));
                 }
-                for (int r = 0; r < rgRows; r++) {
+                for (int r = 0; r < rowsInGroup; r++) {
                     Object[] row = new Object[colValues.length];
                     for (int c = 0; c < colValues.length; c++) row[c] = colValues[c][r];
                     rows.add(row);
@@ -377,20 +377,20 @@ public class MiniParquet {
     }
 
     private static Object[] decodePlain(ColType type, byte[] body, int numValues) {
-        Object[] out = new Object[numValues];
+        Object[] result = new Object[numValues];
         switch (type) {
             case DOUBLE: {
                 for (int i = 0; i < numValues; i++) {
                     long bits = 0;
                     for (int b = 0; b < 8; b++) bits |= ((long) (body[i * 8 + b] & 0xFF)) << (8 * b);
-                    out[i] = Double.longBitsToDouble(bits);
+                    result[i] = Double.longBitsToDouble(bits);
                 }
                 break;
             }
             case BOOLEAN: {
                 for (int i = 0; i < numValues; i++) {
                     int byteIdx = i / 8, bitIdx = i % 8;
-                    out[i] = (body[byteIdx] & (1 << bitIdx)) != 0;
+                    result[i] = (body[byteIdx] & (1 << bitIdx)) != 0;
                 }
                 break;
             }
@@ -399,13 +399,13 @@ public class MiniParquet {
                 for (int i = 0; i < numValues; i++) {
                     int len = (body[pos] & 0xFF) | ((body[pos + 1] & 0xFF) << 8) | ((body[pos + 2] & 0xFF) << 16) | ((body[pos + 3] & 0xFF) << 24);
                     pos += 4;
-                    out[i] = new String(body, pos, len, StandardCharsets.UTF_8);
+                    result[i] = new String(body, pos, len, StandardCharsets.UTF_8);
                     pos += len;
                 }
                 break;
             }
         }
-        return out;
+        return result;
     }
 
     private static final class PageHeaderInfo {
@@ -465,10 +465,10 @@ public class MiniParquet {
             switch (f.id) {
                 case 2: {
                     TCompactReader.ListHeader lh = r.readListBegin();
-                    List<SchemaElem> all = new ArrayList<>();
-                    for (int i = 0; i < lh.size; i++) all.add(parseSchemaElement(r));
+                    List<SchemaElem> schemaElems = new ArrayList<>();
+                    for (int i = 0; i < lh.size; i++) schemaElems.add(parseSchemaElement(r));
 
-                    if (!all.isEmpty()) meta.columns.addAll(all.subList(1, all.size()));
+                    if (!schemaElems.isEmpty()) meta.columns.addAll(schemaElems.subList(1, schemaElems.size()));
                     break;
                 }
                 case 3: meta.numRows = r.readZigZagVarintForType(f.type); break;

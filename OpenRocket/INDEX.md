@@ -17,9 +17,9 @@
 
 ## arc-sim output subfolders
 
-`arc-sim`'s engines and tools each write into their own subfolder here, next to the `.ork` inputs,
-using `AppConfig`'s working-folder default. Every run is auto-named with a timestamp, so nothing
-here ever gets overwritten by a later run.
+Each of `arc-sim`'s engines and tools writes into its own subfolder here, right next to the `.ork`
+inputs, using `AppConfig`'s working-folder default. Every run gets a timestamp baked into its name,
+so nothing here ever gets clobbered by a later run.
 
 | Subfolder | Written by | Contents |
 |---|---|---|

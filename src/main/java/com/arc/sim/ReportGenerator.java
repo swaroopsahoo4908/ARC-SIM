@@ -15,8 +15,8 @@ public class ReportGenerator {
         File summaryFile = new File(parquetFile.getParentFile(), OutputNaming.baseName(parquetFile) + "_summary.csv");
         Map<String, String> summary = new LinkedHashMap<>();
         if (summaryFile.exists()) {
-            CsvUtil.Table t = CsvUtil.read(summaryFile);
-            for (List<String> row : t.rows) {
+            CsvUtil.Table summaryCsv = CsvUtil.read(summaryFile);
+            for (List<String> row : summaryCsv.rows) {
                 if (row.size() >= 2) summary.put(row.get(0), row.get(1));
             }
         }

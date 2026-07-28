@@ -47,36 +47,36 @@ public class GridAxis {
     }
 
     public static SweepConfig load(File propsFile) throws Exception {
-        Properties p = new Properties();
+        Properties props = new Properties();
         try (FileInputStream in = new FileInputStream(propsFile)) {
-            p.load(in);
+            props.load(in);
         }
         SweepConfig cfg = new SweepConfig();
-        cfg.windAvg = axis(p, "windAvg", 0, 22, 0.5);
-        cfg.windStdDev = axis(p, "windStdDev", 0, 6, 1.0);
-        cfg.turbulencePct = axis(p, "turbulencePct", 0, 60, 10.0);
-        cfg.windDir = axis(p, "windDir", 0, 350, 10.0);
-        cfg.temp = axis(p, "temp", -10, 40, 5.0);
-        cfg.pressure = axis(p, "pressure", 970, 1030, 10.0);
-        cfg.rodAngle = axis(p, "rodAngle", 0, 6, 3.0);
+        cfg.windAvg = axis(props, "windAvg", 0, 22, 0.5);
+        cfg.windStdDev = axis(props, "windStdDev", 0, 6, 1.0);
+        cfg.turbulencePct = axis(props, "turbulencePct", 0, 60, 10.0);
+        cfg.windDir = axis(props, "windDir", 0, 350, 10.0);
+        cfg.temp = axis(props, "temp", -10, 40, 5.0);
+        cfg.pressure = axis(props, "pressure", 970, 1030, 10.0);
+        cfg.rodAngle = axis(props, "rodAngle", 0, 6, 3.0);
 
         List<LaunchSite> sites = new ArrayList<>();
-        String sitesStr = p.getProperty("sites", "MDRA_SOD_FARM,SPAAR_LANCASTER");
+        String sitesStr = props.getProperty("sites", "MDRA_SOD_FARM,SPAAR_LANCASTER");
         for (String s : sitesStr.split(",")) {
             sites.add(LaunchSite.parse(s.trim()));
         }
         cfg.sites = sites;
 
-        cfg.maxCombosSafety = Long.parseLong(p.getProperty("maxCombosSafety", "5000000"));
-        cfg.threads = Integer.parseInt(p.getProperty("threads",
+        cfg.maxCombosSafety = Long.parseLong(props.getProperty("maxCombosSafety", "5000000"));
+        cfg.threads = Integer.parseInt(props.getProperty("threads",
                 String.valueOf(Runtime.getRuntime().availableProcessors())));
         return cfg;
     }
 
-    private static GridAxis axis(Properties p, String prefix, double defMin, double defMax, double defStep) {
-        double min = Double.parseDouble(p.getProperty(prefix + ".min", String.valueOf(defMin)));
-        double max = Double.parseDouble(p.getProperty(prefix + ".max", String.valueOf(defMax)));
-        double step = Double.parseDouble(p.getProperty(prefix + ".step", String.valueOf(defStep)));
+    private static GridAxis axis(Properties props, String prefix, double defMin, double defMax, double defStep) {
+        double min = Double.parseDouble(props.getProperty(prefix + ".min", String.valueOf(defMin)));
+        double max = Double.parseDouble(props.getProperty(prefix + ".max", String.valueOf(defMax)));
+        double step = Double.parseDouble(props.getProperty(prefix + ".step", String.valueOf(defStep)));
         return new GridAxis(min, max, step);
     }
 }

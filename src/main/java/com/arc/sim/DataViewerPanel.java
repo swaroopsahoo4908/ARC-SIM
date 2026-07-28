@@ -207,12 +207,12 @@ public class DataViewerPanel extends JPanel {
     }
 
     private void openCsv(File f) throws Exception {
-        CsvUtil.Table t = CsvUtil.read(f);
+        CsvUtil.Table csv = CsvUtil.read(f);
         int rowCap = (Integer) rowCapSpinner.getValue();
-        Vector<String> columns = new Vector<>(t.header);
+        Vector<String> columns = new Vector<>(csv.header);
         Vector<Vector<Object>> data = new Vector<>();
         int shown = 0;
-        for (List<String> row : t.rows) {
+        for (List<String> row : csv.rows) {
             if (shown >= rowCap) break;
             Vector<Object> rowData = new Vector<>();
             for (int c = 0; c < columns.size(); c++) {
@@ -222,30 +222,30 @@ public class DataViewerPanel extends JPanel {
             shown++;
         }
         applyModel(data, columns);
-        infoLabel.setText(String.format("CSV: showing %,d of %,d row(s)%s", shown, t.rows.size(),
-                shown < t.rows.size() ? " (raise the row cap to see more)" : ""));
+        infoLabel.setText(String.format("CSV: showing %,d of %,d row(s)%s", shown, csv.rows.size(),
+                shown < csv.rows.size() ? " (raise the row cap to see more)" : ""));
     }
 
     private void openParquet(File f) throws Exception {
         int rowCap = (Integer) rowCapSpinner.getValue();
-        MiniParquet.ReadResult result = MiniParquet.read(f, rowCap);
+        MiniParquet.ReadResult parquet = MiniParquet.read(f, rowCap);
         long totalRows;
         try {
             totalRows = MiniParquet.countRows(f);
         } catch (Exception ex) {
-            totalRows = result.rows.size();
+            totalRows = parquet.rows.size();
         }
-        Vector<String> columns = new Vector<>(result.columnNames);
+        Vector<String> columns = new Vector<>(parquet.columnNames);
         Vector<Vector<Object>> data = new Vector<>();
-        for (Object[] row : result.rows) {
+        for (Object[] row : parquet.rows) {
             Vector<Object> rowData = new Vector<>();
             for (Object v : row) rowData.add(v == null ? "" : v);
             data.add(rowData);
         }
         applyModel(data, columns);
         infoLabel.setText(String.format("Parquet: showing %,d of %,d row(s)%s -- columns: %s",
-                result.rows.size(), totalRows, result.rows.size() < totalRows ? " (raise the row cap to see more)" : "",
-                String.join(", ", result.columnNames)));
+                parquet.rows.size(), totalRows, parquet.rows.size() < totalRows ? " (raise the row cap to see more)" : "",
+                String.join(", ", parquet.columnNames)));
     }
 
     private void setEmptyModel(String message) {

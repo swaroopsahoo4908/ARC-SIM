@@ -185,7 +185,6 @@ public class DesignSolver {
             boolean improvedThisPass;
 
             if (!patternSearchMode) {
-
                 double[] joint = jointSolveBallastAndFinHeight(runner, ballast, finSet, fixedSweepM, hole, holeRadiusM,
                         env, targetApogeeM, targetTimeCenterS, ballastKg, finHeightM, bounds);
                 ballastKg = joint[0];
@@ -209,7 +208,6 @@ public class DesignSolver {
                 } else {
                     noImprovePasses++;
                     if (noImprovePasses >= STAGNATION_LIMIT) {
-
                         patternSearchMode = true;
                         ballastKg = tracker.bestBallastKg;
                         finHeightM = tracker.bestFinHeightM;
@@ -220,45 +218,44 @@ public class DesignSolver {
                     }
                 }
             } else {
-
                 double workBallast = tracker.bestBallastKg, workFin = tracker.bestFinHeightM, workHole = tracker.bestHoleRadiusM;
                 improvedThisPass = false;
 
                 if (stepBallastKg > 0) {
                     double plus = clamp(workBallast + stepBallastKg, bounds.minBallastKg, bounds.maxBallastKg);
-                    Eval e = evaluate(runner, ballast, plus, finSet, workFin, fixedSweepM, hole, workHole, env, targetApogeeM, targetTimeCenterS);
-                    if (tracker.offer(e, plus, workFin, workHole, designDetail(plus, workFin, workHole, outer, true))) {
+                    Eval plusEval = evaluate(runner, ballast, plus, finSet, workFin, fixedSweepM, hole, workHole, env, targetApogeeM, targetTimeCenterS);
+                    if (tracker.offer(plusEval, plus, workFin, workHole, designDetail(plus, workFin, workHole, outer, true))) {
                         workBallast = plus; improvedThisPass = true;
                     } else {
                         double minus = clamp(workBallast - stepBallastKg, bounds.minBallastKg, bounds.maxBallastKg);
-                        Eval e2 = evaluate(runner, ballast, minus, finSet, workFin, fixedSweepM, hole, workHole, env, targetApogeeM, targetTimeCenterS);
-                        if (tracker.offer(e2, minus, workFin, workHole, designDetail(minus, workFin, workHole, outer, true))) {
+                        Eval minusEval = evaluate(runner, ballast, minus, finSet, workFin, fixedSweepM, hole, workHole, env, targetApogeeM, targetTimeCenterS);
+                        if (tracker.offer(minusEval, minus, workFin, workHole, designDetail(minus, workFin, workHole, outer, true))) {
                             workBallast = minus; improvedThisPass = true;
                         }
                     }
                 }
                 if (stepFinHeightM > 0 && !Thread.currentThread().isInterrupted()) {
                     double plus = clamp(workFin + stepFinHeightM, bounds.minFinHeightM, bounds.maxFinHeightM);
-                    Eval e = evaluate(runner, ballast, workBallast, finSet, plus, fixedSweepM, hole, workHole, env, targetApogeeM, targetTimeCenterS);
-                    if (tracker.offer(e, workBallast, plus, workHole, designDetail(workBallast, plus, workHole, outer, true))) {
+                    Eval plusEval = evaluate(runner, ballast, workBallast, finSet, plus, fixedSweepM, hole, workHole, env, targetApogeeM, targetTimeCenterS);
+                    if (tracker.offer(plusEval, workBallast, plus, workHole, designDetail(workBallast, plus, workHole, outer, true))) {
                         workFin = plus; improvedThisPass = true;
                     } else {
                         double minus = clamp(workFin - stepFinHeightM, bounds.minFinHeightM, bounds.maxFinHeightM);
-                        Eval e2 = evaluate(runner, ballast, workBallast, finSet, minus, fixedSweepM, hole, workHole, env, targetApogeeM, targetTimeCenterS);
-                        if (tracker.offer(e2, workBallast, minus, workHole, designDetail(workBallast, minus, workHole, outer, true))) {
+                        Eval minusEval = evaluate(runner, ballast, workBallast, finSet, minus, fixedSweepM, hole, workHole, env, targetApogeeM, targetTimeCenterS);
+                        if (tracker.offer(minusEval, workBallast, minus, workHole, designDetail(workBallast, minus, workHole, outer, true))) {
                             workFin = minus; improvedThisPass = true;
                         }
                     }
                 }
                 if (stepHoleRadiusM > 0 && !Thread.currentThread().isInterrupted()) {
                     double plus = clamp(workHole + stepHoleRadiusM, bounds.minHoleRadiusM, bounds.maxHoleRadiusM);
-                    Eval e = evaluate(runner, ballast, workBallast, finSet, workFin, fixedSweepM, hole, plus, env, targetApogeeM, targetTimeCenterS);
-                    if (tracker.offer(e, workBallast, workFin, plus, designDetail(workBallast, workFin, plus, outer, true))) {
+                    Eval plusEval = evaluate(runner, ballast, workBallast, finSet, workFin, fixedSweepM, hole, plus, env, targetApogeeM, targetTimeCenterS);
+                    if (tracker.offer(plusEval, workBallast, workFin, plus, designDetail(workBallast, workFin, plus, outer, true))) {
                         workHole = plus; improvedThisPass = true;
                     } else {
                         double minus = clamp(workHole - stepHoleRadiusM, bounds.minHoleRadiusM, bounds.maxHoleRadiusM);
-                        Eval e2 = evaluate(runner, ballast, workBallast, finSet, workFin, fixedSweepM, hole, minus, env, targetApogeeM, targetTimeCenterS);
-                        if (tracker.offer(e2, workBallast, workFin, minus, designDetail(workBallast, workFin, minus, outer, true))) {
+                        Eval minusEval = evaluate(runner, ballast, workBallast, finSet, workFin, fixedSweepM, hole, minus, env, targetApogeeM, targetTimeCenterS);
+                        if (tracker.offer(minusEval, workBallast, workFin, minus, designDetail(workBallast, workFin, minus, outer, true))) {
                             workHole = minus; improvedThisPass = true;
                         }
                     }
@@ -269,7 +266,6 @@ public class DesignSolver {
                 holeRadiusM = tracker.bestHoleRadiusM;
                 last = tracker.best;
                 if (last == null) {
-
                     System.out.println("No successful simulation yet after " + (outer + 1) + " passes -- check the rocket file/environment; stopping.");
                     break;
                 }
@@ -441,7 +437,6 @@ public class DesignSolver {
             ballast.setTotalKg(b);
             finSet.setHeight(f);
 
-            // Normal equations for weighted least squares: (J^T J + lambda * diag(J^T J)) * delta = -J^T r
             double a11 = j11 * j11 + j21 * j21;
             double a12 = j11 * j12 + j21 * j22;
             double a22 = j12 * j12 + j22 * j22;

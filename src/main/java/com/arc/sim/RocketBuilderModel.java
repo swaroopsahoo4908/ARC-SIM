@@ -1,5 +1,7 @@
 package com.arc.sim;
 
+import info.openrocket.core.aerodynamics.BarrowmanCalculator;
+import info.openrocket.core.aerodynamics.FlightConditions;
 import info.openrocket.core.database.motor.ThrustCurveMotorSet;
 import info.openrocket.core.database.motor.ThrustCurveMotorSetDatabase;
 import info.openrocket.core.document.OpenRocketDocument;
@@ -8,6 +10,9 @@ import info.openrocket.core.document.Simulation;
 import info.openrocket.core.file.GeneralRocketLoader;
 import info.openrocket.core.file.GeneralRocketSaver;
 import info.openrocket.core.file.motor.GeneralMotorLoader;
+import info.openrocket.core.logging.WarningSet;
+import info.openrocket.core.masscalc.MassCalculator;
+import info.openrocket.core.masscalc.RigidBody;
 import info.openrocket.core.material.Material;
 import info.openrocket.core.motor.Manufacturer;
 import info.openrocket.core.motor.Motor;
@@ -25,12 +30,6 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.function.Supplier;
 
-/**
- * Non-GUI model layer for the Rocket Builder tab: creating/loading/saving an OpenRocketDocument,
- * adding/removing/repositioning components on its Rocket tree, a curated material catalog, and
- * motor-mount assignment against the bundled thrust-curve motor database. Wraps info.openrocket.core
- * directly (no GUI dependency) so it can be exercised headlessly in tests.
- */
 public class RocketBuilderModel {
 
     private final OpenRocketDocument document;
@@ -103,9 +102,80 @@ public class RocketBuilderModel {
         return RocketGeometryExtractor.extract(rocket);
     }
 
-    // ---------------------------------------------------------------------
-    // Component tree mutation
-    // ---------------------------------------------------------------------
+    public enum StabilityRating {
+        UNSTABLE, MARGINAL, STABLE, OVERSTABLE, UNKNOWN
+    }
+
+    public static final class StabilityInfo {
+        public final boolean ok;
+        public final String error;
+        public final double massKg;
+        public final double cgXM;
+        public final double cpXM;
+        public final double referenceDiameterM;
+        public final double marginCalibers;
+        public final StabilityRating rating;
+        public final List<String> warnings;
+
+        private StabilityInfo(boolean ok, String error, double massKg, double cgXM, double cpXM,
+                               double referenceDiameterM, double marginCalibers, StabilityRating rating,
+                               List<String> warnings) {
+            this.ok = ok;
+            this.error = error;
+            this.massKg = massKg;
+            this.cgXM = cgXM;
+            this.cpXM = cpXM;
+            this.referenceDiameterM = referenceDiameterM;
+            this.marginCalibers = marginCalibers;
+            this.rating = rating;
+            this.warnings = warnings;
+        }
+
+        private static StabilityInfo failure(String error) {
+            return new StabilityInfo(false, error, Double.NaN, Double.NaN, Double.NaN, Double.NaN,
+                    Double.NaN, StabilityRating.UNKNOWN, List.of());
+        }
+    }
+
+    public StabilityInfo computeStability() {
+        try {
+            FlightConfiguration config = rocket.getSelectedConfiguration();
+            FlightConditions conditions = new FlightConditions(config);
+            conditions.setMach(0.3);
+            double refLength = conditions.getRefLength();
+            if (!(refLength > 1e-9)) {
+                return StabilityInfo.failure("No body diameter yet -- add a body tube or nose cone first.");
+            }
+
+            WarningSet warningSet = new WarningSet();
+            BarrowmanCalculator barrowman = new BarrowmanCalculator();
+            Coordinate cp = barrowman.getCP(config, conditions, warningSet);
+
+            RigidBody launchMass = MassCalculator.calculateLaunch(config);
+            Coordinate cg = launchMass.getCM();
+
+            double margin = (cp.x - cg.x) / refLength;
+            StabilityRating rating;
+            if (Double.isNaN(margin)) {
+                rating = StabilityRating.UNKNOWN;
+            } else if (margin < 1.0) {
+                rating = StabilityRating.UNSTABLE;
+            } else if (margin < 1.5) {
+                rating = StabilityRating.MARGINAL;
+            } else if (margin <= 2.5) {
+                rating = StabilityRating.STABLE;
+            } else {
+                rating = StabilityRating.OVERSTABLE;
+            }
+
+            List<String> warnings = new ArrayList<>();
+            for (Object w : warningSet) warnings.add(w.toString());
+
+            return new StabilityInfo(true, null, launchMass.getMass(), cg.x, cp.x, refLength, margin, rating, warnings);
+        } catch (Exception e) {
+            return StabilityInfo.failure("Not enough geometry to compute stability yet (" + e.getClass().getSimpleName() + ").");
+        }
+    }
 
     public enum ComponentType {
         AXIAL_STAGE("Stage", AxialStage.class, AxialStage::new),
@@ -281,16 +351,6 @@ public class RocketBuilderModel {
         if (idx < parent.getChildCount() - 1) parent.moveChild(c, idx + 1);
     }
 
-    // ---------------------------------------------------------------------
-    // Materials
-    // ---------------------------------------------------------------------
-
-    /**
-     * Curated, top-of-the-line material catalog. Densities are typical reference values for the
-     * material class/grade named (aerospace-grade where a grade is named) -- treat as design-stage
-     * estimates, not a certified materials database. BULK = kg/m^3 (structural solids), SURFACE =
-     * kg/m^2 (canopy fabrics), LINE = kg/m (cords/shroud lines).
-     */
     public static final class MaterialCatalog {
         private static final List<Material> BULK = new ArrayList<>();
         private static final List<Material> SURFACE = new ArrayList<>();
@@ -361,11 +421,6 @@ public class RocketBuilderModel {
             return LINE.get(0);
         }
 
-        /**
-         * Adds a user-defined material to the catalog (persists for the rest of this session, across
-         * any rocket open in the Rocket Builder). Density units follow the type: kg/m^3 for BULK,
-         * kg/m^2 for SURFACE, kg/m for LINE.
-         */
         public static Material addCustom(Material.Type type, String name, double density) {
             if (name == null || name.isBlank()) {
                 throw new IllegalArgumentException("Material name can't be blank.");
@@ -373,14 +428,14 @@ public class RocketBuilderModel {
             if (density <= 0) {
                 throw new IllegalArgumentException("Density must be positive.");
             }
-            Material m = Material.newMaterial(type, name.trim(), density, true);
+            Material mat = Material.newMaterial(type, name.trim(), density, true);
             switch (type) {
-                case BULK -> BULK.add(m);
-                case SURFACE -> SURFACE.add(m);
-                case LINE -> LINE.add(m);
+                case BULK -> BULK.add(mat);
+                case SURFACE -> SURFACE.add(mat);
+                case LINE -> LINE.add(mat);
                 default -> throw new IllegalArgumentException("Unsupported material type: " + type);
             }
-            return m;
+            return mat;
         }
 
         public static List<Material> materialsFor(Material.Type type) {
@@ -393,43 +448,32 @@ public class RocketBuilderModel {
         }
     }
 
-    // ---------------------------------------------------------------------
-    // Motor database / assignment
-    // ---------------------------------------------------------------------
-
     public List<ThrustCurveMotorSet> searchMotorSets(String query, Double mountDiameterM, double diameterToleranceM) {
-        ThrustCurveMotorSetDatabase db = Application.getThrustCurveMotorSetDatabase();
-        String q = query == null ? "" : query.trim().toLowerCase();
-        List<ThrustCurveMotorSet> out = new ArrayList<>();
-        for (ThrustCurveMotorSet ms : db.getMotorSets()) {
+        ThrustCurveMotorSetDatabase motorDb = Application.getThrustCurveMotorSetDatabase();
+        String needle = query == null ? "" : query.trim().toLowerCase();
+        List<ThrustCurveMotorSet> matches = new ArrayList<>();
+        for (ThrustCurveMotorSet ms : motorDb.getMotorSets()) {
             if (mountDiameterM != null && Math.abs(ms.getDiameter() - mountDiameterM) > diameterToleranceM) {
                 continue;
             }
-            if (!q.isEmpty()) {
-                String hay = (ms.getManufacturer() + " " + ms.getDesignation() + " " + ms.getCommonName()).toLowerCase();
-                if (!hay.contains(q)) continue;
+            if (!needle.isEmpty()) {
+                String haystack = (ms.getManufacturer() + " " + ms.getDesignation() + " " + ms.getCommonName()).toLowerCase();
+                if (!haystack.contains(needle)) continue;
             }
-            out.add(ms);
+            matches.add(ms);
         }
-        out.sort(Comparator.comparingDouble(ThrustCurveMotorSet::getDiameter)
+        matches.sort(Comparator.comparingDouble(ThrustCurveMotorSet::getDiameter)
                 .thenComparing(ms -> ms.getManufacturer().toString())
                 .thenComparingLong(ThrustCurveMotorSet::getTotalImpulse));
-        return out;
+        return matches;
     }
 
-    /** Session-wide custom/imported motors (not part of the bundled thrust-curve database). */
     private static final List<ThrustCurveMotor> CUSTOM_MOTORS = new ArrayList<>();
 
     public static List<ThrustCurveMotor> customMotors() {
         return List.copyOf(CUSTOM_MOTORS);
     }
 
-    /**
-     * Builds a custom motor from hand-entered specs using an idealized trapezoidal thrust curve
-     * (10% ramp-up / 80% plateau / 10% tail-off) that reproduces the given total impulse exactly.
-     * This is a design-stage approximation, not a certified thrust curve -- for a real motor's
-     * actual data, use {@link #importMotorFile}.
-     */
     public static ThrustCurveMotor createCustomMotor(String designation, String manufacturerName,
             Motor.Type type, double diameterM, double lengthM, double burnTimeS, double totalImpulseNs,
             double initialMassKg, double propellantMassKg, double[] delaysS) {
@@ -445,70 +489,57 @@ public class RocketBuilderModel {
 
         double burnoutMass = initialMassKg - propellantMassKg;
         double peakThrust = totalImpulseNs / (0.9 * burnTimeS);
-        double[] t = {0.0, 0.1 * burnTimeS, 0.9 * burnTimeS, burnTimeS};
+        double[] times = {0.0, 0.1 * burnTimeS, 0.9 * burnTimeS, burnTimeS};
         double[] thrust = {0.0, peakThrust, peakThrust, 0.0};
-        Coordinate[] cg = new Coordinate[t.length];
-        for (int i = 0; i < t.length; i++) {
-            double mass = initialMassKg - (initialMassKg - burnoutMass) * (t[i] / burnTimeS);
-            cg[i] = new Coordinate(lengthM / 2.0, 0, 0, mass);
+        Coordinate[] cgPoints = new Coordinate[times.length];
+        for (int i = 0; i < times.length; i++) {
+            double mass = initialMassKg - (initialMassKg - burnoutMass) * (times[i] / burnTimeS);
+            cgPoints[i] = new Coordinate(lengthM / 2.0, 0, 0, mass);
         }
 
-        ThrustCurveMotor.Builder b = new ThrustCurveMotor.Builder();
-        b.setManufacturer(Manufacturer.getManufacturer(
+        ThrustCurveMotor.Builder builder = new ThrustCurveMotor.Builder();
+        builder.setManufacturer(Manufacturer.getManufacturer(
                 (manufacturerName == null || manufacturerName.isBlank()) ? "Custom" : manufacturerName.trim()));
-        b.setDesignation(designation.trim());
-        b.setCommonName(designation.trim());
-        b.setDiameter(diameterM);
-        b.setLength(lengthM);
-        b.setMotorType(type == null ? Motor.Type.UNKNOWN : type);
-        b.setStandardDelays(delaysS != null && delaysS.length > 0 ? delaysS : new double[]{0.0});
-        b.setTimePoints(t);
-        b.setThrustPoints(thrust);
-        b.setCGPoints(cg);
-        b.setInitialMass(initialMassKg);
-        b.setCaseInfo("Custom");
-        b.setPropellantInfo("Custom");
-        b.setDescription("Custom motor defined in Arc-Sim Rocket Builder (idealized trapezoidal thrust curve, " +
+        builder.setDesignation(designation.trim());
+        builder.setCommonName(designation.trim());
+        builder.setDiameter(diameterM);
+        builder.setLength(lengthM);
+        builder.setMotorType(type == null ? Motor.Type.UNKNOWN : type);
+        builder.setStandardDelays(delaysS != null && delaysS.length > 0 ? delaysS : new double[]{0.0});
+        builder.setTimePoints(times);
+        builder.setThrustPoints(thrust);
+        builder.setCGPoints(cgPoints);
+        builder.setInitialMass(initialMassKg);
+        builder.setCaseInfo("Custom");
+        builder.setPropellantInfo("Custom");
+        builder.setDescription("Custom motor defined in Arc-Sim Rocket Builder (idealized trapezoidal thrust curve, " +
                 "reproduces the specified total impulse and burn time exactly; not a certified thrust curve).");
-        b.setDigest("custom-" + designation.trim() + "-" + System.nanoTime());
-        ThrustCurveMotor motor = b.build();
+        builder.setDigest("custom-" + designation.trim() + "-" + System.nanoTime());
+        ThrustCurveMotor motor = builder.build();
         registerMotor(motor);
         return motor;
     }
 
-    /**
-     * Registers a motor into both our own session-list (for display in the picker) and OpenRocket's
-     * actual runtime motor database. The second part matters: a .ork file stores motor references by
-     * digest/manufacturer/designation and re-resolves them against the running app's motor database
-     * on load -- skip this and a saved rocket's custom motor silently reverts to "no motor" the moment
-     * it's reloaded (including by this same Rocket Builder's own Save -> reload round-trip). Custom
-     * motors only persist for the lifetime of this running session; re-define or re-import them after
-     * restarting the app if a saved rocket needs them again.
-     */
     private static void registerMotor(ThrustCurveMotor motor) {
         CUSTOM_MOTORS.add(motor);
         Application.getThrustCurveMotorSetDatabase().addMotor(motor);
     }
 
-    /**
-     * Imports one or more real motors from a RASP (.eng), RockSim (.rse), or zipped thrust-curve
-     * file via OpenRocket's own motor-file loader, and adds them to the session's custom motor list.
-     */
     public static List<ThrustCurveMotor> importMotorFile(File file) throws Exception {
         GeneralMotorLoader loader = new GeneralMotorLoader();
-        List<ThrustCurveMotor> imported = new ArrayList<>();
+        List<ThrustCurveMotor> motors = new ArrayList<>();
         try (FileInputStream fis = new FileInputStream(file)) {
             List<ThrustCurveMotor.Builder> builders = loader.load(fis, file.getName());
-            for (ThrustCurveMotor.Builder b : builders) {
-                ThrustCurveMotor m = b.build();
-                imported.add(m);
-                registerMotor(m);
+            for (ThrustCurveMotor.Builder builder : builders) {
+                ThrustCurveMotor built = builder.build();
+                motors.add(built);
+                registerMotor(built);
             }
         }
-        if (imported.isEmpty()) {
+        if (motors.isEmpty()) {
             throw new IllegalStateException("No motors found in " + file.getName() + " -- expected a .eng, .rse, or zipped thrust-curve file.");
         }
-        return imported;
+        return motors;
     }
 
     public void assignMotor(MotorMount mount, ThrustCurveMotor motor) {

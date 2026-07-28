@@ -34,19 +34,52 @@ public class MeshExporter {
         }
     }
 
-    public static List<Triangle> buildMesh(RocketGeometryExtractor.Geometry g) {
+    public static List<Triangle> buildMesh(RocketGeometryExtractor.Geometry geo) {
         List<Triangle> tris = new ArrayList<>();
-        for (RocketGeometryExtractor.BodyShape body : g.bodies) {
+        for (RocketGeometryExtractor.BodyShape body : geo.bodies) {
             addBodyOfRevolution(tris, body);
         }
-        if (!g.bodies.isEmpty()) {
-            RocketGeometryExtractor.BodyShape last = g.bodies.get(g.bodies.size() - 1);
-            addEndCap(tris, last.xStart + last.length, last.aftRadius, false);
+        if (!geo.bodies.isEmpty()) {
+            RocketGeometryExtractor.BodyShape lastBody = geo.bodies.get(geo.bodies.size() - 1);
+            addEndCap(tris, lastBody.xStart + lastBody.length, lastBody.aftRadius, false);
         }
-        for (RocketGeometryExtractor.FinShape fin : g.fins) {
+        for (RocketGeometryExtractor.FinShape fin : geo.fins) {
             addFinSet(tris, fin);
         }
+        for (RocketGeometryExtractor.AppendageShape appendage : geo.appendages) {
+            addAppendage(tris, appendage);
+        }
         return tris;
+    }
+
+    private static void addAppendage(List<Triangle> tris, RocketGeometryExtractor.AppendageShape a) {
+        double halfLen = Math.max(0.0015, a.lengthAlongAxis / 2.0);
+        double halfWidth = halfLen;
+        double rInner = a.parentRadius;
+        double rOuter = a.parentRadius + Math.max(0.001, a.protrusionHeight);
+
+        double x0 = (a.xCenter - halfLen) * MM_PER_M;
+        double x1 = (a.xCenter + halfLen) * MM_PER_M;
+        double yInner = rInner * MM_PER_M;
+        double yOuter = rOuter * MM_PER_M;
+        double z0 = -halfWidth * MM_PER_M;
+        double z1 = halfWidth * MM_PER_M;
+
+        double[] a000 = {x0, yInner, z0};
+        double[] a100 = {x1, yInner, z0};
+        double[] a110 = {x1, yInner, z1};
+        double[] a010 = {x0, yInner, z1};
+        double[] b000 = {x0, yOuter, z0};
+        double[] b100 = {x1, yOuter, z0};
+        double[] b110 = {x1, yOuter, z1};
+        double[] b010 = {x0, yOuter, z1};
+
+        addQuad(tris, b000, b100, b110, b010);
+        addQuad(tris, a010, a110, a100, a000);
+        addQuad(tris, a000, a100, b100, b000);
+        addQuad(tris, a100, a110, b110, b100);
+        addQuad(tris, a110, a010, b010, b110);
+        addQuad(tris, a010, a000, b000, b010);
     }
 
     public static List<Triangle> buildFinSetMesh(List<RocketGeometryExtractor.FinShape> fins) {

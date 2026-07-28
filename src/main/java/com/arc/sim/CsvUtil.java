@@ -15,13 +15,13 @@ public class CsvUtil {
     }
 
     public static String row(Object... values) {
-        StringBuilder sb = new StringBuilder();
+        StringBuilder line = new StringBuilder();
         for (int i = 0; i < values.length; i++) {
-            if (i > 0) sb.append(',');
+            if (i > 0) line.append(',');
             Object v = values[i];
-            sb.append(escape(v == null ? "" : String.valueOf(v)));
+            line.append(escape(v == null ? "" : String.valueOf(v)));
         }
-        return sb.toString();
+        return line.toString();
     }
 
     public static class Table {

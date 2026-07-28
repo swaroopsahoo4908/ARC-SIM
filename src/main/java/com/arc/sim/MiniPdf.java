@@ -39,7 +39,6 @@ public class MiniPdf {
         }
 
         private List<String> paginate() {
-
             List<String> pageStreams = new ArrayList<>();
             StringBuilder stream = new StringBuilder();
             double y = PAGE_HEIGHT - MARGIN;
@@ -71,13 +70,13 @@ public class MiniPdf {
         }
 
         private static String escape(String s) {
-            StringBuilder sb = new StringBuilder();
+            StringBuilder out = new StringBuilder();
             for (char c : s.toCharArray()) {
-                if (c == '\\' || c == '(' || c == ')') sb.append('\\');
-                if (c < 32 || c > 126) { sb.append('?'); continue; }
-                sb.append(c);
+                if (c == '\\' || c == '(' || c == ')') out.append('\\');
+                if (c < 32 || c > 126) { out.append('?'); continue; }
+                out.append(c);
             }
-            return sb.toString();
+            return out.toString();
         }
     }
 

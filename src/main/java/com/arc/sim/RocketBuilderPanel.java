@@ -17,6 +17,7 @@ import javax.swing.tree.DefaultTreeCellRenderer;
 import javax.swing.tree.TreeModel;
 import javax.swing.tree.TreePath;
 import java.awt.*;
+import java.awt.event.ActionEvent;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
 import java.io.File;
@@ -25,13 +26,6 @@ import java.util.List;
 import java.util.function.DoubleConsumer;
 import java.util.function.IntConsumer;
 
-/**
- * Self-contained "build a rocket from scratch" tab: a component tree editor covering geometry,
- * materials, and positioning for the OpenRocket core component model, plus motor-mount assignment
- * against the bundled thrust-curve database. Not an "engine" (no atmosphere/target inputs, no
- * simulation run) -- a peer utility tab to Geometry Exporter and Data Viewer. Saves plain .ork files
- * usable anywhere else in Arc-Sim (Engine 1/2/4, Geometry Exporter).
- */
 public class RocketBuilderPanel extends JPanel {
 
     private RocketBuilderModel model;
@@ -44,10 +38,13 @@ public class RocketBuilderPanel extends JPanel {
     private final JPanel propertyContainer = new JPanel(new BorderLayout());
     private final RocketPreviewPanel previewPanel = new RocketPreviewPanel();
     private final JLabel statusLabel = new JLabel(" ");
+    private final JLabel stabilityLabel = new JLabel(" ");
 
     private final JButton removeButton = new JButton("Remove Component");
     private final JButton upButton = new JButton("Move Up");
     private final JButton downButton = new JButton("Move Down");
+    private final JButton undoButton = new JButton("Undo");
+    private final JButton redoButton = new JButton("Redo");
 
     public RocketBuilderPanel() {
         super(new BorderLayout(8, 8));
@@ -56,10 +53,6 @@ public class RocketBuilderPanel extends JPanel {
         buildUi();
         refreshAll();
     }
-
-    // -----------------------------------------------------------------
-    // UI construction
-    // -----------------------------------------------------------------
 
     private void buildUi() {
         JPanel top = new JPanel(new BorderLayout(4, 4));
@@ -79,16 +72,32 @@ public class RocketBuilderPanel extends JPanel {
         removeButton.addActionListener(e -> doRemove());
         upButton.addActionListener(e -> doMove(true));
         downButton.addActionListener(e -> doMove(false));
+        undoButton.addActionListener(e -> doUndo());
+        redoButton.addActionListener(e -> doRedo());
 
         toolbar.add(newButton);
         toolbar.add(openButton);
         toolbar.add(saveButton);
         toolbar.add(saveAsButton);
         toolbar.add(new JSeparator(SwingConstants.VERTICAL));
+        toolbar.add(undoButton);
+        toolbar.add(redoButton);
+        toolbar.add(new JSeparator(SwingConstants.VERTICAL));
         toolbar.add(addButton);
         toolbar.add(removeButton);
         toolbar.add(upButton);
         toolbar.add(downButton);
+
+        String undoKey = "arcSimUndo", redoKey = "arcSimRedo";
+        int menuShortcutMask = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
+        getInputMap(WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_Z, menuShortcutMask), undoKey);
+        getActionMap().put(undoKey, new AbstractAction() {
+            @Override public void actionPerformed(ActionEvent e) { doUndo(); }
+        });
+        getInputMap(WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_Y, menuShortcutMask), redoKey);
+        getActionMap().put(redoKey, new AbstractAction() {
+            @Override public void actionPerformed(ActionEvent e) { doRedo(); }
+        });
 
         JLabel hint = new JLabel("<html><body style='width: 900px'><i>Build a rocket from scratch: " +
                 "select a node on the left and click \"Add Component\" to attach nose cones, body tubes, " +
@@ -128,15 +137,20 @@ public class RocketBuilderPanel extends JPanel {
 
         statusLabel.setForeground(Color.GRAY);
 
+        stabilityLabel.setFont(stabilityLabel.getFont().deriveFont(Font.BOLD, 12f));
+        stabilityLabel.setBorder(new EmptyBorder(2, 2, 6, 2));
+
+        JPanel northWrap = new JPanel(new BorderLayout(0, 4));
+        northWrap.add(top, BorderLayout.NORTH);
+        northWrap.add(stabilityLabel, BorderLayout.SOUTH);
+
         setLayout(new BorderLayout(8, 8));
-        add(top, BorderLayout.NORTH);
+        add(northWrap, BorderLayout.NORTH);
         add(mainSplit, BorderLayout.CENTER);
         add(statusLabel, BorderLayout.SOUTH);
-    }
 
-    // -----------------------------------------------------------------
-    // File actions
-    // -----------------------------------------------------------------
+        updateUndoRedoButtons();
+    }
 
     private boolean confirmDiscardIfDirty() {
         if (!dirty) return true;
@@ -189,9 +203,6 @@ public class RocketBuilderPanel extends JPanel {
     private void doSaveAs() {
         File startDir = lastDir;
         if (currentFile == null && lastDir.equals(AppConfig.appDir())) {
-            // Brand-new, never-saved rocket and the user hasn't browsed anywhere yet this session --
-            // default straight into OpenRocket/Rocket Builder/, mirroring how the other tabs (Design
-            // Solver -> "OpenRocket Solves/", Geometry Exporter -> "CAD Files/", etc.) file their output.
             startDir = OutputNaming.appRelativeFolder(AppConfig.appDir(), OutputNaming.ROCKET_BUILDER_FOLDER);
         }
         JFileChooser chooser = new JFileChooser(startDir);
@@ -212,10 +223,6 @@ public class RocketBuilderPanel extends JPanel {
             JOptionPane.showMessageDialog(this, "Could not save: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
         }
     }
-
-    // -----------------------------------------------------------------
-    // Tree actions
-    // -----------------------------------------------------------------
 
     private RocketComponent getSelectedComponent() {
         TreePath path = tree.getSelectionPath();
@@ -248,11 +255,11 @@ public class RocketBuilderPanel extends JPanel {
                 any = true;
                 JMenuItem item = new JMenuItem(type.displayName);
                 item.addActionListener(e -> {
-                    RocketComponent added = model.addComponent(selected, type);
-                    markDirty();
+                    RocketComponent[] addedHolder = new RocketComponent[1];
+                    withUndo("Add " + type.displayName, () -> addedHolder[0] = model.addComponent(selected, type));
                     treeModel.fireStructureChanged(selected);
                     expandAll();
-                    selectComponent(added);
+                    selectComponent(addedHolder[0]);
                     refreshPreview();
                 });
                 menu.add(item);
@@ -273,8 +280,7 @@ public class RocketBuilderPanel extends JPanel {
             return;
         }
         RocketComponent parent = selected.getParent();
-        model.removeComponent(selected);
-        markDirty();
+        withUndo("Remove component", () -> model.removeComponent(selected));
         treeModel.fireStructureChanged(parent);
         expandAll();
         selectComponent(parent);
@@ -285,9 +291,10 @@ public class RocketBuilderPanel extends JPanel {
         RocketComponent selected = getSelectedComponent();
         if (selected == null || selected.getParent() == null) return;
         RocketComponent parent = selected.getParent();
-        if (up) model.moveComponentUp(selected);
-        else model.moveComponentDown(selected);
-        markDirty();
+        withUndo(up ? "Move component up" : "Move component down", () -> {
+            if (up) model.moveComponentUp(selected);
+            else model.moveComponentDown(selected);
+        });
         treeModel.fireStructureChanged(parent);
         expandAll();
         selectComponent(selected);
@@ -309,10 +316,6 @@ public class RocketBuilderPanel extends JPanel {
         showPropertiesFor(selected);
     }
 
-    // -----------------------------------------------------------------
-    // Refresh / status
-    // -----------------------------------------------------------------
-
     private void refreshAll() {
         treeModel = new ComponentTreeModel(model.getRocket());
         tree.setModel(treeModel);
@@ -320,11 +323,93 @@ public class RocketBuilderPanel extends JPanel {
         selectComponent(model.getRocket());
         refreshPreview();
         updateStatus();
+        updateUndoRedoButtons();
     }
 
     private void refreshPreview() {
         String label = (currentFile != null ? currentFile.getName() : "New Rocket (unsaved)") + (dirty ? " *" : "");
         previewPanel.setGeometry(model.previewGeometry(), label);
+        refreshStability();
+    }
+
+    private void refreshStability() {
+        RocketBuilderModel.StabilityInfo info = model.computeStability();
+        if (!info.ok) {
+            stabilityLabel.setText(info.error);
+            stabilityLabel.setForeground(Color.GRAY);
+            return;
+        }
+        String ratingText = switch (info.rating) {
+            case UNSTABLE -> "UNSTABLE";
+            case MARGINAL -> "MARGINAL";
+            case STABLE -> "STABLE";
+            case OVERSTABLE -> "OVERSTABLE";
+            default -> "UNKNOWN";
+        };
+        Color color = switch (info.rating) {
+            case UNSTABLE -> new Color(180, 30, 30);
+            case MARGINAL -> new Color(190, 130, 0);
+            case STABLE -> new Color(30, 130, 60);
+            case OVERSTABLE -> new Color(30, 90, 160);
+            default -> Color.GRAY;
+        };
+        stabilityLabel.setForeground(color);
+        stabilityLabel.setText(String.format("Stability: %s -- %.2f calibers  (CG %.3f m, CP %.3f m, mass %.3f kg)",
+                ratingText, info.marginCalibers, info.cgXM, info.cpXM, info.massKg));
+    }
+
+    private void withUndo(String description, Runnable mutation) {
+        info.openrocket.core.document.OpenRocketDocument doc = model.getDocument();
+        doc.startUndo(description);
+        try {
+            mutation.run();
+        } finally {
+            doc.stopUndo();
+        }
+        markDirty();
+        updateUndoRedoButtons();
+    }
+
+    private void doUndo() {
+        info.openrocket.core.document.OpenRocketDocument doc = model.getDocument();
+        if (!doc.isUndoAvailable()) return;
+        doc.undo();
+        afterUndoRedo();
+    }
+
+    private void doRedo() {
+        info.openrocket.core.document.OpenRocketDocument doc = model.getDocument();
+        if (!doc.isRedoAvailable()) return;
+        doc.redo();
+        afterUndoRedo();
+    }
+
+    private void afterUndoRedo() {
+        RocketComponent selected = getSelectedComponent();
+        treeModel.fireStructureChanged(model.getRocket());
+        expandAll();
+        if (selected != null && isStillInTree(selected)) {
+            selectComponent(selected);
+        } else {
+            selectComponent(model.getRocket());
+        }
+        markDirty();
+        refreshPreview();
+        updateUndoRedoButtons();
+    }
+
+    private boolean isStillInTree(RocketComponent c) {
+        RocketComponent cur = c;
+        while (cur.getParent() != null) cur = cur.getParent();
+        return cur == model.getRocket();
+    }
+
+    private void updateUndoRedoButtons() {
+        info.openrocket.core.document.OpenRocketDocument doc = model.getDocument();
+        undoButton.setEnabled(doc.isUndoAvailable());
+        redoButton.setEnabled(doc.isRedoAvailable());
+        undoButton.setToolTipText(doc.isUndoAvailable() ? "Undo: " + doc.getUndoDescription() : "Nothing to undo");
+        redoButton.setToolTipText(doc.isRedoAvailable() ? "Redo: " + doc.getRedoDescription() : "Nothing to redo");
     }
 
     private void markDirty() {
@@ -350,61 +435,50 @@ public class RocketBuilderPanel extends JPanel {
         refreshPreview();
     }
 
-    // -----------------------------------------------------------------
-    // Property panel construction
-    // -----------------------------------------------------------------
-
     private void applyName(RocketComponent c, JTextField field) {
         String v = field.getText();
         if (v == null) v = "";
         if (!v.equals(c.getName())) {
-            c.setName(v);
-            markDirty();
+            String finalV = v;
+            withUndo("Rename component", () -> c.setName(finalV));
             treeModel.fireNodeChanged(c);
         }
     }
 
     private JSpinner meterSpinner(double value, double min, double max, double step, DoubleConsumer onChange) {
-        // Clamp the bounds to always include the component's actual current value -- components
-        // loaded from an existing .ork (or created via other tools/OpenRocket itself) can legitimately
-        // sit outside our hand-picked "typical" ranges (e.g. a filled/solid part with thickness == 0,
-        // or a scaled-up airframe), and SpinnerNumberModel throws if value is outside [min, max].
-        double safeMin = Math.min(min, value);
-        double safeMax = Math.max(max, value);
-        JSpinner s = new JSpinner(new SpinnerNumberModel(value, safeMin, safeMax, step));
-        s.setEditor(new JSpinner.NumberEditor(s, "0.0000"));
-        ((JSpinner.NumberEditor) s.getEditor()).getTextField().setColumns(8);
-        s.addChangeListener(e -> {
-            onChange.accept(((Number) s.getValue()).doubleValue());
-            markDirty();
+        double lo = Math.min(min, value);
+        double hi = Math.max(max, value);
+        JSpinner spinner = new JSpinner(new SpinnerNumberModel(value, lo, hi, step));
+        spinner.setEditor(new JSpinner.NumberEditor(spinner, "0.0000"));
+        ((JSpinner.NumberEditor) spinner.getEditor()).getTextField().setColumns(8);
+        spinner.addChangeListener(e -> {
+            withUndo("Edit dimension", () -> onChange.accept(((Number) spinner.getValue()).doubleValue()));
             refreshPreview();
         });
-        return s;
+        return spinner;
     }
 
     private JSpinner kgSpinner(double value, double min, double max, double step, DoubleConsumer onChange) {
-        double safeMin = Math.min(min, value);
-        double safeMax = Math.max(max, value);
-        JSpinner s = new JSpinner(new SpinnerNumberModel(value, safeMin, safeMax, step));
-        s.setEditor(new JSpinner.NumberEditor(s, "0.000"));
-        s.addChangeListener(e -> {
-            onChange.accept(((Number) s.getValue()).doubleValue());
-            markDirty();
+        double lo = Math.min(min, value);
+        double hi = Math.max(max, value);
+        JSpinner spinner = new JSpinner(new SpinnerNumberModel(value, lo, hi, step));
+        spinner.setEditor(new JSpinner.NumberEditor(spinner, "0.000"));
+        spinner.addChangeListener(e -> {
+            withUndo("Edit mass", () -> onChange.accept(((Number) spinner.getValue()).doubleValue()));
             refreshPreview();
         });
-        return s;
+        return spinner;
     }
 
     private JSpinner intSpinner(int value, int min, int max, IntConsumer onChange) {
-        int safeMin = Math.min(min, value);
-        int safeMax = Math.max(max, value);
-        JSpinner s = new JSpinner(new SpinnerNumberModel(value, safeMin, safeMax, 1));
-        s.addChangeListener(e -> {
-            onChange.accept((Integer) s.getValue());
-            markDirty();
+        int lo = Math.min(min, value);
+        int hi = Math.max(max, value);
+        JSpinner spinner = new JSpinner(new SpinnerNumberModel(value, lo, hi, 1));
+        spinner.addChangeListener(e -> {
+            withUndo("Edit count", () -> onChange.accept((Integer) spinner.getValue()));
             refreshPreview();
         });
-        return s;
+        return spinner;
     }
 
     private JComboBox<Material> materialCombo(List<Material> options, Material current, java.util.function.Consumer<Material> onChange) {
@@ -434,8 +508,7 @@ public class RocketBuilderPanel extends JPanel {
             combo.setSelectedItem(current);
         }
         combo.addActionListener(e -> {
-            onChange.accept((Material) combo.getSelectedItem());
-            markDirty();
+            withUndo("Change material", () -> onChange.accept((Material) combo.getSelectedItem()));
             refreshPreview();
         });
         return combo;
@@ -445,7 +518,6 @@ public class RocketBuilderPanel extends JPanel {
         return RocketBuilderModel.MaterialCatalog.materialsFor(type);
     }
 
-    /** A material combo box plus a "+" button that opens an "add custom material" dialog. */
     private JPanel materialRow(Material.Type type, Material current, java.util.function.Consumer<Material> onChange) {
         JComboBox<Material> combo = materialCombo(catalogFor(type), current, onChange);
         JButton addBtn = new JButton("+");
@@ -536,8 +608,7 @@ public class RocketBuilderPanel extends JPanel {
         JComboBox<AxialMethod> methodCombo = new JComboBox<>(AxialMethod.values());
         methodCombo.setSelectedItem(c.getAxialMethod());
         methodCombo.addActionListener(e -> {
-            c.setAxialMethod((AxialMethod) methodCombo.getSelectedItem());
-            markDirty();
+            withUndo("Change axial method", () -> c.setAxialMethod((AxialMethod) methodCombo.getSelectedItem()));
             refreshPreview();
         });
         form.addRow("Axial method:", methodCombo);
@@ -550,18 +621,14 @@ public class RocketBuilderPanel extends JPanel {
         MotorMount mount = (MotorMount) c;
         form.addSection("Motor Mount");
         JCheckBox mountBox = new JCheckBox("This component is a motor mount", mount.isMotorMount());
-        mountBox.addActionListener(e -> {
-            mount.setMotorMount(mountBox.isSelected());
-            markDirty();
-        });
+        mountBox.addActionListener(e -> withUndo("Toggle motor mount", () -> mount.setMotorMount(mountBox.isSelected())));
         form.addRow("", mountBox);
         form.addRow("Current motor:", new JLabel(describeMotor(mount)));
         JButton selectBtn = new JButton("Select Motor...");
         selectBtn.addActionListener(e -> showMotorPicker(c));
         JButton clearBtn = new JButton("Clear Motor");
         clearBtn.addActionListener(e -> {
-            model.clearMotor(mount);
-            markDirty();
+            withUndo("Clear motor", () -> model.clearMotor(mount));
             refreshSelectedPropertyPanel();
         });
         JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
@@ -769,10 +836,8 @@ public class RocketBuilderPanel extends JPanel {
             form.addRow("Radius (m):", meterSpinner(mc.getRadius(), 0.0, 0.5, 0.001, mc::setRadius));
             JComboBox<MassComponent.MassComponentType> typeCombo = new JComboBox<>(MassComponent.MassComponentType.values());
             typeCombo.setSelectedItem(mc.getMassComponentType());
-            typeCombo.addActionListener(e -> {
-                mc.setMassComponentType((MassComponent.MassComponentType) typeCombo.getSelectedItem());
-                markDirty();
-            });
+            typeCombo.addActionListener(e -> withUndo("Change purpose",
+                    () -> mc.setMassComponentType((MassComponent.MassComponentType) typeCombo.getSelectedItem())));
             form.addRow("Purpose:", typeCombo);
             form.addRow("", hint("Use this for ballast, an altimeter, flight computer, deployment charge, " +
                     "tracker, payload, recovery hardware, or battery -- purpose is a label only and doesn't " +
@@ -813,10 +878,6 @@ public class RocketBuilderPanel extends JPanel {
         return scroll;
     }
 
-    // -----------------------------------------------------------------
-    // Motor picker dialog
-    // -----------------------------------------------------------------
-
     private void showMotorPicker(RocketComponent mountComponent) {
         MotorMount mount = (MotorMount) mountComponent;
         double mountDiameterM = motorMountDiameterHint(mountComponent);
@@ -826,8 +887,6 @@ public class RocketBuilderPanel extends JPanel {
         dialog.setLocationRelativeTo(this);
         dialog.setLayout(new BorderLayout(8, 8));
 
-        // A single "currently picked" motor, settable by either table below (selecting a row in one
-        // clears the other, so there's never ambiguity about what "Assign Selected Motor" acts on).
         ThrustCurveMotor[] chosen = new ThrustCurveMotor[1];
 
         JPanel filterRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6));
@@ -970,14 +1029,12 @@ public class RocketBuilderPanel extends JPanel {
                 JOptionPane.showMessageDialog(dialog, "Select a motor row first (from either table).");
                 return;
             }
-            model.assignMotor(mount, chosen[0]);
-            markDirty();
+            withUndo("Assign motor", () -> model.assignMotor(mount, chosen[0]));
             dialog.dispose();
             refreshSelectedPropertyPanel();
         });
         clearButton.addActionListener(e -> {
-            model.clearMotor(mount);
-            markDirty();
+            withUndo("Clear motor", () -> model.clearMotor(mount));
             dialog.dispose();
             refreshSelectedPropertyPanel();
         });
@@ -1106,10 +1163,6 @@ public class RocketBuilderPanel extends JPanel {
             }
         }
     }
-
-    // -----------------------------------------------------------------
-    // Tree model
-    // -----------------------------------------------------------------
 
     private static class ComponentTreeModel implements TreeModel {
         private final Rocket root;

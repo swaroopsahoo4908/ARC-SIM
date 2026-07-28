@@ -18,21 +18,21 @@ public class RocketInspector {
     }
 
     public static List<Item<MassComponent>> listMassComponents(Rocket rocket) {
-        List<Item<MassComponent>> result = new ArrayList<>();
-        collect(rocket, MassComponent.class, "", result);
-        return result;
+        List<Item<MassComponent>> items = new ArrayList<>();
+        collect(rocket, MassComponent.class, "", items);
+        return items;
     }
 
     public static List<Item<Parachute>> listParachutes(Rocket rocket) {
-        List<Item<Parachute>> result = new ArrayList<>();
-        collect(rocket, Parachute.class, "", result);
-        return result;
+        List<Item<Parachute>> items = new ArrayList<>();
+        collect(rocket, Parachute.class, "", items);
+        return items;
     }
 
     public static List<Item<TrapezoidFinSet>> listTrapezoidFinSets(Rocket rocket) {
-        List<Item<TrapezoidFinSet>> result = new ArrayList<>();
-        collect(rocket, TrapezoidFinSet.class, "", result);
-        return result;
+        List<Item<TrapezoidFinSet>> items = new ArrayList<>();
+        collect(rocket, TrapezoidFinSet.class, "", items);
+        return items;
     }
 
     public static MassComponent suggestBallastDefault(Rocket rocket) {
@@ -66,7 +66,6 @@ public class RocketInspector {
                     best = p.component;
                 }
             } catch (Exception ignored) {
-
             }
         }
         return best;
@@ -111,7 +110,6 @@ public class RocketInspector {
                 return String.format("h=%.3f m", f.getHeight());
             }
         } catch (Exception ignored) {
-
         }
         return "";
     }

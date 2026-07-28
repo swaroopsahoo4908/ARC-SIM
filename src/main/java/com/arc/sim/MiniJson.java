@@ -15,9 +15,8 @@ public class MiniJson {
     }
 
     public static Object parse(String json) {
-        MiniJson p = new MiniJson(json);
-        Object v = p.parseValue();
-        return v;
+        MiniJson parser = new MiniJson(json);
+        return parser.parseValue();
     }
 
     @SuppressWarnings("unchecked")
@@ -117,34 +116,34 @@ public class MiniJson {
     private String parseString() {
         skipWs();
         i++;
-        StringBuilder sb = new StringBuilder();
+        StringBuilder out = new StringBuilder();
         while (true) {
             char c = s.charAt(i++);
             if (c == '"') break;
             if (c == '\\') {
                 char esc = s.charAt(i++);
                 switch (esc) {
-                    case '"': sb.append('"'); break;
-                    case '\\': sb.append('\\'); break;
-                    case '/': sb.append('/'); break;
-                    case 'n': sb.append('\n'); break;
-                    case 't': sb.append('\t'); break;
-                    case 'r': sb.append('\r'); break;
-                    case 'b': sb.append('\b'); break;
-                    case 'f': sb.append('\f'); break;
+                    case '"': out.append('"'); break;
+                    case '\\': out.append('\\'); break;
+                    case '/': out.append('/'); break;
+                    case 'n': out.append('\n'); break;
+                    case 't': out.append('\t'); break;
+                    case 'r': out.append('\r'); break;
+                    case 'b': out.append('\b'); break;
+                    case 'f': out.append('\f'); break;
                     case 'u':
                         String hex = s.substring(i, i + 4);
-                        sb.append((char) Integer.parseInt(hex, 16));
+                        out.append((char) Integer.parseInt(hex, 16));
                         i += 4;
                         break;
                     default:
-                        sb.append(esc);
+                        out.append(esc);
                 }
             } else {
-                sb.append(c);
+                out.append(c);
             }
         }
-        return sb.toString();
+        return out.toString();
     }
 
     private Double parseNumber() {

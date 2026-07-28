@@ -31,16 +31,16 @@ public class RocketComponents {
 
     public static List<MassComponent> findBallastComponents(Rocket rocket) {
         BodyTube lowest = findLowestBodyTube(rocket);
-        List<MassComponent> result = new ArrayList<>();
+        List<MassComponent> ballast = new ArrayList<>();
         for (RocketComponent c : lowest.getChildren()) {
-            if (c instanceof MassComponent) result.add((MassComponent) c);
+            if (c instanceof MassComponent) ballast.add((MassComponent) c);
         }
-        if (result.isEmpty()) {
+        if (ballast.isEmpty()) {
             throw new IllegalStateException("No MassComponent found inside the lowest body tube ('" +
                     lowest.getName() + "'). Add one there in the OpenRocket GUI to act as ballast " +
                     "(the solver will drive its mass; starting value doesn't matter).");
         }
-        return result;
+        return ballast;
     }
 
     public static Parachute findMainParachute(Rocket rocket) {

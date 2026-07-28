@@ -240,15 +240,6 @@ public class WeatherDrivenDesign {
                                               double loM, double hiM) {
         finSet.setSweep(fixedSweepM);
 
-        // Below some fin height, this class of airframe goes aerodynamically unstable (insufficient fin area
-        // to keep the CP behind the CG) and the rocket tumbles right off the rod instead of flying a normal
-        // trajectory -- apogee collapses to a few meters. That boundary is close to a step function (normal
-        // flight can start within a hundredth of a meter of still-crashing), so a scan across the full
-        // [loM, hiM] range can land entirely on one side or the other of it and never see the true crossing.
-        // initialGuessM is the already-solved main design's fin height, which is guaranteed to fly normally
-        // (it's the design this whole run is built around) -- use it as a known-stable anchor and binary
-        // search for the instability boundary directly, then restrict the actual apogee search to the
-        // confirmed-safe region above that floor, where the apogee-vs-height relationship is well-behaved.
         double stableAnchorM = Math.max(loM, Math.min(hiM, initialGuessM));
         double searchLoM = loM;
         finSet.setHeight(stableAnchorM);
@@ -274,10 +265,6 @@ public class WeatherDrivenDesign {
             }
         }
 
-        // Scan the confirmed-safe sub-range to find a bracket where the apogee-vs-height trend can be
-        // trusted, then bisect within that bracket. Sample density is skewed toward the low end via a
-        // quadratic spacing (t^2), since the steepest part of the response tends to sit just above the
-        // stability floor.
         int samples = Math.max(2, FIN_SCAN_SAMPLES);
         double[] heights = new double[samples];
         double[] apogees = new double[samples];
@@ -311,10 +298,6 @@ public class WeatherDrivenDesign {
             return heights[bestIdx];
         }
 
-        // Find every adjacent sample pair where apogee crosses the target (either direction -- doesn't
-        // assume taller fin always means lower apogee, since that can invert near the instability
-        // transition), then bisect within whichever crossing sits closest to the best coarse sample, since
-        // that's the physically relevant one rather than some spurious oscillation elsewhere in the range.
         int bracketLeft = -1;
         int bestBracketDistance = Integer.MAX_VALUE;
         for (int i = 0; i < samples - 1; i++) {

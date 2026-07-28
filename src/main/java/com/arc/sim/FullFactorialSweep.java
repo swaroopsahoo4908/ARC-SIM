@@ -195,10 +195,10 @@ public class FullFactorialSweep {
                     pool.shutdownNow();
                     break;
                 }
-                Object[] item = queue.take();
-                double[] vals = (double[]) item[0];
-                LaunchSite site = (LaunchSite) item[1];
-                SimRunner.FlightResult r = (SimRunner.FlightResult) item[2];
+                Object[] entry = queue.take();
+                double[] vals = (double[]) entry[0];
+                LaunchSite site = (LaunchSite) entry[1];
+                SimRunner.FlightResult r = (SimRunner.FlightResult) entry[2];
 
                 writeRow(writer, vals[0], vals[1], vals[2], vals[3], vals[4], vals[5], vals[6], site.label, r, "full_factorial");
 

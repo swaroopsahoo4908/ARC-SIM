@@ -105,7 +105,37 @@ public class RocketPreviewPanel extends JPanel {
             g.draw(bottom);
         }
 
+        for (RocketGeometryExtractor.AppendageShape a : geometry.appendages) {
+            int cx = margin + (int) (a.xCenter * scale);
+            int halfLen = Math.max(1, (int) (a.lengthAlongAxis * scale / 2));
+            int bodyTop = centerY - (int) (a.parentRadius * scale);
+            int protrusion = Math.max(2, (int) (a.protrusionHeight * scale));
+            Color fill = a.kind == RocketGeometryExtractor.AppendageKind.RAIL_BUTTON
+                    ? new Color(60, 140, 70, 220) : new Color(90, 90, 170, 220);
+            int rectW = Math.max(2, halfLen * 2);
+            g.setColor(fill);
+            g.fillRect(cx - halfLen, bodyTop - protrusion, rectW, protrusion);
+            g.setColor(fill.darker());
+            g.drawRect(cx - halfLen, bodyTop - protrusion, rectW, protrusion);
+        }
+
+        if (!geometry.pointMasses.isEmpty()) {
+            int bodyBottom = centerY + (int) (geometry.maxRadius * scale);
+            int tickBaseY = Math.min(getHeight() - 46, bodyBottom + 16);
+            g.setFont(g.getFont().deriveFont(9f));
+            boolean altRow = false;
+            for (RocketGeometryExtractor.PointMassShape m : geometry.pointMasses) {
+                int cx = margin + (int) (m.xCenter * scale);
+                int y = tickBaseY + (altRow ? 13 : 0);
+                g.setColor(new Color(130, 85, 170));
+                g.fillOval(cx - 3, y - 3, 6, 6);
+                g.drawString(m.label + String.format(" (%.0fg)", m.massKg * 1000.0), cx + 5, y + 3);
+                altRow = !altRow;
+            }
+        }
+
         g.setColor(Color.DARK_GRAY);
+        g.setFont(g.getFont().deriveFont(Font.PLAIN, 11f));
         g.drawString(rocketName + "   (length \u2248 " + String.format("%.2f", geometry.totalLength) + " m, "
                 + "max diameter \u2248 " + String.format("%.3f", geometry.maxRadius * 2) + " m)", margin, 20);
         g.setFont(g.getFont().deriveFont(Font.ITALIC, 10f));

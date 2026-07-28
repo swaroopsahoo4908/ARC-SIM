@@ -53,25 +53,47 @@ public class DeviceLocation {
         }
     }
 
+    private static final String[] CORE_LOCATION_CLI_CANDIDATES = {
+            "CoreLocationCLI",
+            "/opt/homebrew/bin/CoreLocationCLI",
+            "/usr/local/bin/CoreLocationCLI",
+    };
+
+    private static Process launchCoreLocationCli() throws Exception {
+        Exception lastFailure = null;
+        for (String candidate : CORE_LOCATION_CLI_CANDIDATES) {
+            try {
+                ProcessBuilder pb = new ProcessBuilder(candidate, "--json");
+                pb.redirectErrorStream(true);
+                String path = pb.environment().get("PATH");
+                String extra = "/opt/homebrew/bin:/usr/local/bin";
+                pb.environment().put("PATH", (path == null || path.isBlank()) ? extra : path + ":" + extra);
+                return pb.start();
+            } catch (Exception e) {
+                lastFailure = e;
+            }
+        }
+        throw lastFailure;
+    }
+
     private static Reading tryCoreLocationCli() {
         Process proc;
         try {
-            ProcessBuilder pb = new ProcessBuilder("CoreLocationCLI", "--json");
-            pb.redirectErrorStream(true);
-            proc = pb.start();
+            proc = launchCoreLocationCli();
         } catch (Exception e) {
-            System.err.println("CoreLocationCLI not found on PATH -- falling back to IP-based geolocation.");
+            System.err.println("CoreLocationCLI not found on PATH or in the usual Homebrew install locations "
+                    + "(/opt/homebrew/bin, /usr/local/bin) -- falling back to IP-based geolocation.");
             return null;
         }
 
         String rawOutput;
         try {
-            StringBuilder out = new StringBuilder();
+            StringBuilder sb = new StringBuilder();
             try (BufferedReader r = new BufferedReader(new InputStreamReader(proc.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;
-                while ((line = r.readLine()) != null) out.append(line);
+                while ((line = r.readLine()) != null) sb.append(line);
             }
-            rawOutput = out.toString();
+            rawOutput = sb.toString();
 
             boolean finished = proc.waitFor(CORE_LOCATION_CLI_TIMEOUT_S, TimeUnit.SECONDS);
             if (!finished) {
@@ -99,8 +121,8 @@ public class DeviceLocation {
                         + "falling back to IP-based geolocation. Raw output: " + rawOutput);
                 return null;
             }
-            double alt = asFlexibleDouble(MiniJson.get(root, "altitude"));
-            if (Double.isNaN(alt)) alt = fetchElevation(lat, lon);
+            double altitude = asFlexibleDouble(MiniJson.get(root, "altitude"));
+            if (Double.isNaN(altitude)) altitude = fetchElevation(lat, lon);
             double hAccuracy = asFlexibleDouble(MiniJson.get(root, "h_accuracy"));
 
             String note = "Resolved via this Mac's Wi-Fi Positioning System fix (Macs have no GPS receiver; "
@@ -110,7 +132,7 @@ public class DeviceLocation {
                             : String.format("CoreLocation reports a horizontal accuracy radius of %.0f m for this fix. ", hAccuracy))
                     + "Confirm against a handheld GPS reading before use in a flight-critical calculation.";
 
-            return new Reading(lat, lon, alt, "CoreLocationCLI (on-device Wi-Fi positioning)", note, hAccuracy);
+            return new Reading(lat, lon, altitude, "CoreLocationCLI (on-device Wi-Fi positioning)", note, hAccuracy);
         } catch (Exception e) {
             System.err.println("Could not parse CoreLocationCLI output (" + e.getMessage()
                     + ") -- falling back to IP-based geolocation. Raw output: " + rawOutput);

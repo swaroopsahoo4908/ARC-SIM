@@ -54,12 +54,6 @@ public class OutputNaming {
         return dir;
     }
 
-    /**
-     * Resolves (creating if needed) an app-relative "OpenRocket/&lt;folderName&gt;" category folder next
-     * to the app itself, mirroring the input-file-relative namedSubfolder() convention the other engines
-     * use for tools (like Rocket Builder) that don't start from an existing .ork input file. Falls back
-     * to appDir itself if creation fails for any reason (read-only install location, etc).
-     */
     public static File appRelativeFolder(File appDir, String folderName) {
         File root = new File(appDir, OPENROCKET_ROOT_FOLDER);
         File dir = new File(root, folderName);

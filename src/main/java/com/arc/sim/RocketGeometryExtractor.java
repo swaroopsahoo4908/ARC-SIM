@@ -28,9 +28,30 @@ public class RocketGeometryExtractor {
         public String label;
     }
 
+    public enum AppendageKind { RAIL_BUTTON, LAUNCH_LUG }
+
+    public static class AppendageShape {
+        public AppendageKind kind;
+        public double xCenter;
+        public double parentRadius;
+        public double protrusionHeight;
+        public double lengthAlongAxis;
+        public String label;
+    }
+
+    public static class PointMassShape {
+        public double xCenter;
+        public double lengthAlongAxis;
+        public double massKg;
+        public String kindLabel;
+        public String label;
+    }
+
     public static class Geometry {
         public List<BodyShape> bodies = new ArrayList<>();
         public List<FinShape> fins = new ArrayList<>();
+        public List<AppendageShape> appendages = new ArrayList<>();
+        public List<PointMassShape> pointMasses = new ArrayList<>();
         public double totalLength;
         public double maxRadius;
         public List<String> skipped = new ArrayList<>();
@@ -43,7 +64,75 @@ public class RocketGeometryExtractor {
             x = walkStage(stage, x, g);
         }
         g.totalLength = x;
+        for (RocketComponent stage : rocket.getChildren()) {
+            collectAppendagesAndMasses(stage, g);
+        }
         return g;
+    }
+
+    private static void collectAppendagesAndMasses(RocketComponent comp, Geometry g) {
+        try {
+            if (comp instanceof RailButton rb) {
+                double xCenter = firstLocationX(rb);
+                AppendageShape a = new AppendageShape();
+                a.kind = AppendageKind.RAIL_BUTTON;
+                a.xCenter = xCenter;
+                a.parentRadius = radiusNear(g, xCenter);
+                a.protrusionHeight = rb.getTotalHeight();
+                a.lengthAlongAxis = Math.max(0.003, rb.getOuterDiameter());
+                a.label = safeName(rb);
+                g.appendages.add(a);
+            } else if (comp instanceof LaunchLug lug) {
+                double xCenter = firstLocationX(lug);
+                AppendageShape a = new AppendageShape();
+                a.kind = AppendageKind.LAUNCH_LUG;
+                a.xCenter = xCenter;
+                a.parentRadius = radiusNear(g, xCenter);
+                a.protrusionHeight = Math.max(0.003, lug.getOuterRadius() * 2.0);
+                a.lengthAlongAxis = lug.getLength();
+                a.label = safeName(lug);
+                g.appendages.add(a);
+            } else if (comp instanceof MassComponent || comp instanceof Parachute
+                    || comp instanceof Streamer || comp instanceof ShockCord) {
+                double xCenter = firstLocationX(comp);
+                PointMassShape m = new PointMassShape();
+                m.xCenter = xCenter;
+                m.lengthAlongAxis = Math.max(0.01, comp.getLength());
+                m.massKg = safeMass(comp);
+                m.kindLabel = comp.getClass().getSimpleName();
+                m.label = safeName(comp);
+                g.pointMasses.add(m);
+            }
+        } catch (Throwable t) {
+            g.skipped.add(safeName(comp) + " (" + t.getClass().getSimpleName() + ")");
+        }
+        for (RocketComponent child : comp.getChildren()) {
+            collectAppendagesAndMasses(child, g);
+        }
+    }
+
+    private static double firstLocationX(RocketComponent c) {
+        info.openrocket.core.util.Coordinate[] locs = c.getComponentLocations();
+        return (locs != null && locs.length > 0) ? locs[0].x : 0.0;
+    }
+
+    private static double safeMass(RocketComponent c) {
+        try {
+            return c.getComponentMass();
+        } catch (Throwable t) {
+            return 0.0;
+        }
+    }
+
+    private static double radiusNear(Geometry g, double x) {
+        for (BodyShape b : g.bodies) {
+            if (x >= b.xStart - 1e-6 && x <= b.xStart + b.length + 1e-6) {
+                double frac = b.length > 1e-9 ? Math.min(1.0, Math.max(0.0, (x - b.xStart) / b.length)) : 0.0;
+                int idx = (int) Math.round(frac * (b.profileR.length - 1));
+                return b.profileR[idx];
+            }
+        }
+        return g.maxRadius > 0 ? g.maxRadius : 0.03;
     }
 
     private static double walkStage(RocketComponent stage, double xStart, Geometry g) {
@@ -67,8 +156,6 @@ public class RocketGeometryExtractor {
                     double len = t.getLength();
                     addBody(g, BodyKind.TRANSITION, x, len, sampleProfile(t, len), safeName(c));
                     x += len;
-                } else {
-
                 }
             } catch (Throwable t) {
                 g.skipped.add(safeName(c) + " (" + t.getClass().getSimpleName() + ")");
@@ -92,10 +179,8 @@ public class RocketGeometryExtractor {
                         fs.finCount = Math.max(1, f.getFinCount());
                         fs.baseRotationRad = f.getBaseRotation();
                     } catch (Throwable ignored) {
-
                     }
                     fs.label = safeName(child);
-
                     fs.xStart = tubeXStart + tubeLength - fs.rootChord;
                     g.fins.add(fs);
                 } catch (Throwable t) {
