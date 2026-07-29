@@ -1,0 +1,19 @@
+metric,value
+Run status,COMPLETE
+Full grid size (all sites/conditions),32400
+Combinations planned this run,32400
+Combinations completed,32400
+"Combinations meeting BOTH targets (apogee 243.84m +/- 0.25m, time 38.5s +/- 1.0s)",0
+Success rate,0.0
+Mean apogee (m),145.44076493518625
+Std dev apogee (m),47.03813862419197
+Mean flight time (s),26.44495075565706
+Std dev flight time (s),7.0093268978506895
+Correlation wind_avg vs apogee,-0.7702146082574278
+Correlation temp vs apogee,0.025632306067578
+Correlation pressure vs apogee,-0.010426133671156305
+Correlation rod_angle vs apogee,-0.14078255127926675
+Correlation wind_avg vs flight_time,-0.7190536038581151
+Correlation temp vs flight_time,-0.05511124211189197
+Correlation pressure vs flight_time,0.021938360180264484
+Correlation rod_angle vs flight_time,-0.1525502319245946
