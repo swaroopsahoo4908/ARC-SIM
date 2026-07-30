@@ -6,10 +6,13 @@ import info.openrocket.core.file.GeneralRocketLoader;
 import info.openrocket.core.simulation.FlightData;
 import info.openrocket.core.simulation.SimulationOptions;
 import info.openrocket.core.startup.OpenRocketCore;
+import info.openrocket.core.util.GeodeticComputationStrategy;
 
 import java.io.File;
 
 public class SimRunner {
+
+    private static final double HIGH_FIDELITY_TIME_STEP_S = 0.01;
 
     private final OpenRocketDocument document;
 
@@ -46,6 +49,9 @@ public class SimRunner {
         opt.setLaunchLatitude(env.site.latitudeDeg);
         opt.setLaunchLongitude(env.site.longitudeDeg);
         opt.setLaunchAltitude(env.site.altitudeM);
+
+        opt.setGeodeticComputation(GeodeticComputationStrategy.WGS84);
+        opt.setTimeStep(HIGH_FIDELITY_TIME_STEP_S);
 
         try {
             sim.simulate();
