@@ -1,0 +1,20 @@
+metric,value
+Run status,INCOMPLETE (ERROR: java.lang.InterruptedException) -- 105 / 846720 combinations completed this run. The .parquet file only has these 105 rows.
+Safe resume index,16
+Full grid size (all sites/conditions),846720
+Combinations planned this run,846720
+Combinations completed,105
+"Combinations meeting BOTH targets (apogee 243.84m +/- 0.25m, time 38.5s +/- 1.0s)",0
+Success rate,0.0
+Mean apogee (m),209.87746001248837
+Std dev apogee (m),15.137562859996676
+Mean flight time (s),36.488848832325765
+Std dev flight time (s),1.7529911484136362
+Correlation wind_avg vs apogee,-0.3756795139906384
+Correlation temp vs apogee,0.30522406611347913
+Correlation pressure vs apogee,-0.11458860616500775
+Correlation rod_angle vs apogee,-0.2519512513903244
+Correlation wind_avg vs flight_time,-0.2986843374983057
+Correlation temp vs flight_time,0.11329410060380492
+Correlation pressure vs flight_time,0.07040048896832479
+Correlation rod_angle vs flight_time,-0.32461060480264314
