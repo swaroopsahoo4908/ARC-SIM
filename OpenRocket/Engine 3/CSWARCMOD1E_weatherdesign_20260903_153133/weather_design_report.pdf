@@ -1,0 +1,68 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [ 4 0 R ] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 2368 >>
+stream
+BT /F1 18 Tf 54 738 Td (Arc-Sim -- Weather-Driven Design Report) Tj ET
+BT /F1 10 Tf 54 718 Td (Generated: 2026-09-03 21:20:36) Tj ET
+BT /F1 10 Tf 54 704 Td (Run folder: CSWARCMOD1E_weatherdesign_20260903_153133) Tj ET
+BT /F1 10 Tf 54 690 Td () Tj ET
+BT /F1 13 Tf 54 676 Td (Weather Used) Tj ET
+BT /F1 10 Tf 54 658 Td (Location:           Silver Springs) Tj ET
+BT /F1 10 Tf 54 644 Td (Fetched:            2026-09-03 15:31:12) Tj ET
+BT /F1 10 Tf 54 630 Td (Wind avg / gust:    4.61 / 7.00 m/s) Tj ET
+BT /F1 10 Tf 54 616 Td (Direction:          302 deg) Tj ET
+BT /F1 10 Tf 54 602 Td (Temp / Pressure:    29.3 C / 1012.0 mbar) Tj ET
+BT /F1 10 Tf 54 588 Td (Condition:          Heavy rain at times) Tj ET
+BT /F1 10 Tf 54 574 Td () Tj ET
+BT /F1 13 Tf 54 560 Td (Targets) Tj ET
+BT /F1 10 Tf 54 542 Td (Apogee:             243.84 m) Tj ET
+BT /F1 10 Tf 54 528 Td (Flight time:        37.5 - 39.5 s) Tj ET
+BT /F1 10 Tf 54 514 Td () Tj ET
+BT /F1 13 Tf 54 500 Td (Main Solved Design) Tj ET
+BT /F1 10 Tf 54 482 Td (Ballast:            87.4 g) Tj ET
+BT /F1 10 Tf 54 468 Td (Fin height:         0.0385 m) Tj ET
+BT /F1 10 Tf 54 454 Td (Fin sweep:          0.0550 m \(unchanged\)) Tj ET
+BT /F1 10 Tf 54 440 Td (Hole radius:        3.23 in) Tj ET
+BT /F1 10 Tf 54 426 Td (Apogee:             243.85 m \(within tolerance\)) Tj ET
+BT /F1 10 Tf 54 412 Td (Flight time:        39.01 s \(within tolerance\)) Tj ET
+BT /F1 10 Tf 54 398 Td () Tj ET
+BT /F1 13 Tf 54 384 Td (Margin Fin Sets \(day-of wind variability, ballast/hole radius held fixed\)) Tj ET
+BT /F1 10 Tf 54 366 Td (wind m/s     fin height m apogee m   time s    ) Tj ET
+BT /F1 10 Tf 54 352 Td (3.66         0.0451       242.80     38.79     ) Tj ET
+BT /F1 10 Tf 54 338 Td (4.13         0.0415       242.44     38.79     ) Tj ET
+BT /F1 10 Tf 54 324 Td (5.09         0.0394       244.71     39.14     ) Tj ET
+BT /F1 10 Tf 54 310 Td (5.57         0.0392       240.72     38.64     ) Tj ET
+BT /F1 10 Tf 54 296 Td () Tj ET
+BT /F1 13 Tf 54 282 Td (Notes) Tj ET
+BT /F1 10 Tf 54 264 Td (Always verify the stability margin \(1-2 calibers\) of the solved design in OpenRocket directly) Tj ET
+BT /F1 10 Tf 54 250 Td (before committing to it -- this solver trims fin height/sweep, which can move the CP.) Tj ET
+BT /F1 10 Tf 54 236 Td (Local-conditions sweep results \(day-of variability\) are in the companion .xlsx in the run folder.) Tj ET
+
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000123 00000 n 
+0000000193 00000 n 
+0000000319 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+2739
+%%EOF
