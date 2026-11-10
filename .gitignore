@@ -1,3 +1,9 @@
 .DS_Store
-.DS_Store
-.DS_Store
+**/.DS_Store
+
+# Local settings. Holds the weather API key and absolute paths; never commit.
+.arc-sim-config.properties
+
+# Build output
+target/
+dependency-reduced-pom.xml

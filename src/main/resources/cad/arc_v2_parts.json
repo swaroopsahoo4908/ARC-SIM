@@ -1,0 +1,121 @@
+{
+ "source": "ARC_V2_1.zip (Onshape, STEP AP242, millimetres)",
+ "material": {
+  "name": "Bambu Lab PLA Basic",
+  "densityGcm3": 1.24,
+  "reference": "Bambu Lab, PLA Basic Technical Data Sheet V2.0, ISO 1183"
+ },
+ "assumption": "Per-part mass is CAD volume x 1.24 g/cm3 (raw, 332.76 g total), then every part is scaled by measured/raw so the printed parts total the weighed 306 g (scale 0.9196, effective density 1.140 g/cm3). PLA Aero: weighed 180.6 g (ratio 0.5902 to PLA Basic). No electronics, ballast, motor or recovery gear included.",
+ "totalLengthMm": 735.0,
+ "rawCadMassG": 332.76,
+ "measuredPrintedMassG": 306.0,
+ "measuredPrintedMassAeroG": 180.6,
+ "nose": {
+  "lengthMm": 152.0,
+  "baseRadiusMm": 27.0,
+  "thicknessMm": 1.85,
+  "shape": "ellipsoid"
+ },
+ "upper": {
+  "lengthMm": 163.0,
+  "radiusMm": 27.0,
+  "thicknessMm": 0.85
+ },
+ "transition": {
+  "lengthMm": 115.0,
+  "foreRadiusMm": 27.0,
+  "aftRadiusMm": 33.0,
+  "thicknessMm": 0.85
+ },
+ "lower": {
+  "lengthMm": 305.0,
+  "radiusMm": 33.0,
+  "thicknessMm": 1.26
+ },
+ "fin": {
+  "count": 4,
+  "rootChordMm": 130.0,
+  "tipChordMm": 55.2,
+  "sweepMm": 55.0,
+  "heightMm": 70.0,
+  "thicknessMm": 2.4,
+  "azimuthsDeg": [
+   45,
+   135,
+   225,
+   315
+  ]
+ },
+ "motorMount": {
+  "outerRadiusMm": 16.43,
+  "boreRadiusMm": 14.75,
+  "lengthMm": 118.75,
+  "aftOffsetMm": -12.0,
+  "motorOverhangMm": 10.5
+ },
+ "railButtons": {
+  "centersFromAftMm": [
+   37.5,
+   172.5
+  ],
+  "lengthMm": 25.0,
+  "protrusionMm": 6.44,
+  "azimuthDeg": 0
+ },
+ "parts": [
+  {
+   "id": "nose",
+   "name": "Nose cone",
+   "orComponent": "NoseCone",
+   "volumeMm3": 27085.0,
+   "massG": 33.59,
+   "cgFromNoseTipMm": 83.9,
+   "note": "ellipsoid, 152 mm, base r 27.0 mm"
+  },
+  {
+   "id": "upper",
+   "name": "Upper airframe (incl. bulkhead ring and spigots)",
+   "orComponent": "BodyTube \"Upper\"",
+   "volumeMm3": 39468.2,
+   "massG": 48.94,
+   "cgFromNoseTipMm": 250.34,
+   "note": "r 27.0 mm, 163 mm exposed, 0.85 mm wall"
+  },
+  {
+   "id": "transition",
+   "name": "Mid section, transition half",
+   "orComponent": "Transition",
+   "volumeMm3": 20231.1,
+   "massG": 25.09,
+   "cgFromNoseTipMm": 375.38,
+   "note": "115 mm, r 27.0 -> 33.0 mm"
+  },
+  {
+   "id": "lower",
+   "name": "Lower airframe + mid straight half (rail buttons included)",
+   "orComponent": "BodyTube \"Lower\"",
+   "volumeMm3": 77263.3,
+   "massG": 95.81,
+   "cgFromNoseTipMm": 586.49,
+   "note": "r 33.0 mm, 305 mm"
+  },
+  {
+   "id": "fins",
+   "name": "Fins x4 (airfoil, 2.4 mm)",
+   "orComponent": "TrapezoidFinSet",
+   "volumeMm3": 62176.6,
+   "massG": 77.1,
+   "cgFromNoseTipMm": 668.31,
+   "note": "root 130 / tip 55.2 / sweep 55 / height 70 mm"
+  },
+  {
+   "id": "motor_mount",
+   "name": "Motor mount + retainer cap",
+   "orComponent": "InnerTube \"Engine Mount\"",
+   "volumeMm3": 42118.7,
+   "massG": 52.23,
+   "cgFromNoseTipMm": 693.88,
+   "note": "29.5 mm bore, 118.75 mm, aft end 12 mm behind the airframe"
+  }
+ ]
+}

@@ -3,21 +3,30 @@ package com.arc.sim;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.PrintWriter;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.TreeMap;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class FullFactorialSweep {
 
-    private static final double TARGET_APOGEE_M = 243.84;
-    private static final double APOGEE_TOLERANCE_M = 0.25;
-    private static final double TARGET_TIME_CENTER_S = 38.5;
-    private static final double TIME_TOLERANCE_S = 1.0;
     private static final long QUEUE_CAPACITY = 50_000;
     private static final int ROWS_PER_ROW_GROUP = 200_000;
+
+    /** Combinations a worker claims at a time. Small enough that a cancel wastes little, big enough to avoid contention. */
+    static final int BLOCK_SIZE = 256;
+    /** Test seam: when set, a worker throws as soon as this returns true for a grid index. Null in production. */
+    static volatile java.util.function.LongPredicate failureInjector = null;
+
+    /** Simulations timed (single thread, after one warm-up) to estimate the real runtime before the sweep starts. */
+    private static final int CALIBRATION_SIMS = 24;
 
     public static void main(String[] args) {
         if (args.length < 2) {
@@ -75,9 +84,7 @@ public class FullFactorialSweep {
         long total = cfg.totalCombos();
         startIndex = Math.max(0, Math.min(startIndex, total));
         long remaining = total - startIndex;
-        double estSecPerSim = 0.03;
-        double estHoursSingleThread = remaining * estSecPerSim / 3600.0;
-        double estHoursParallel = estHoursSingleThread / cfg.threads;
+        int effectiveThreads = Math.max(1, Math.min(cfg.threads, Runtime.getRuntime().availableProcessors()));
 
         System.out.printf("Grid: windAvg=%d x windStdDev=%d x turbulence=%d x windDir=%d x temp=%d x pressure=%d x rodAngle=%d x sites=%d%n",
                 cfg.windAvg.count(), cfg.windStdDev.count(), cfg.turbulencePct.count(),
@@ -85,17 +92,27 @@ public class FullFactorialSweep {
         System.out.printf("TOTAL COMBINATIONS: %,d%n", total);
         if (startIndex > 0) {
             System.out.printf("RESUMING from index %,d -- %,d combinations remaining (this run writes a NEW output " +
-                    "file covering just the remainder; combine with the earlier file's rows for the full picture).%n",
-                    startIndex, remaining);
+                    "file covering just the remainder; rows carry a grid_index column so the files can be merged " +
+                    "and de-duplicated on it).%n", startIndex, remaining);
         }
-        System.out.printf("Estimated runtime: ~%.1f hours single-threaded, ~%.1f hours across %d threads " +
-                "(rough estimate at %.0fms/sim -- time a short run on your machine to calibrate)%n",
-                estHoursSingleThread, estHoursParallel, cfg.threads, estSecPerSim * 1000);
+
+        double secPerSim = remaining > 0 ? calibrate(orkFile, cfg, startIndex, total) : 0.0;
+        double estHoursSingleThread = remaining * secPerSim / 3600.0;
+        double estHoursParallel = estHoursSingleThread / effectiveThreads;
+        System.out.printf("Calibrated on %d timed simulations: %.0f ms/sim on one thread. Estimated runtime: ~%.1f hours " +
+                        "single-threaded, ~%.1f hours across %d threads (assumes near-linear scaling; the live ETA is more exact once running).%n",
+                Math.min(CALIBRATION_SIMS, remaining), secPerSim * 1000, estHoursSingleThread, estHoursParallel, effectiveThreads);
 
         if (remaining > cfg.maxCombosSafety && !force) {
             String msg = String.format("Refusing to run: %,d combinations exceeds the safety cap of %,d " +
                     "(set in sweep_grid.properties as maxCombosSafety). Coarsen the increments, raise " +
                     "maxCombosSafety, or force the run.", remaining, cfg.maxCombosSafety);
+            throw new IllegalStateException(msg);
+        }
+        if (cfg.maxHoursSafety > 0 && estHoursParallel > cfg.maxHoursSafety && !force) {
+            String msg = String.format("Refusing to run: estimated %.1f hours exceeds maxHoursSafety of %.1f hours " +
+                    "(sweep_grid.properties). Coarsen the grid, raise maxHoursSafety, or force the run.",
+                    estHoursParallel, cfg.maxHoursSafety);
             throw new IllegalStateException(msg);
         }
 
@@ -106,35 +123,41 @@ public class FullFactorialSweep {
                 cfg.windDir.count(), cfg.temp.count(), cfg.pressure.count(), cfg.rodAngle.count(), cfg.sites.size()
         };
 
-        BlockingQueue<Object[]> queue = new ArrayBlockingQueue<>((int) QUEUE_CAPACITY);
+        BlockingQueue<SweepResult> queue = new ArrayBlockingQueue<>((int) QUEUE_CAPACITY);
+        BlockScheduler scheduler = new BlockScheduler(startIndex, total, BLOCK_SIZE);
+        AtomicInteger liveWorkers = new AtomicInteger(effectiveThreads);
+        AtomicReference<Throwable> workerFailure = new AtomicReference<>();
 
-        ExecutorService pool = Executors.newFixedThreadPool(cfg.threads);
-        long chunkSize = (remaining + cfg.threads - 1) / cfg.threads;
-        List<Future<?>> futures = new java.util.ArrayList<>();
-        java.util.concurrent.atomic.AtomicLongArray threadProgress = new java.util.concurrent.atomic.AtomicLongArray(cfg.threads);
-
-        for (int t = 0; t < cfg.threads; t++) {
-            long startIdx = startIndex + t * chunkSize;
-            long endIdx = Math.min(total, startIdx + chunkSize);
-            threadProgress.set(t, startIdx);
-            if (startIdx >= endIdx) continue;
-            final int threadNum = t;
+        ExecutorService pool = Executors.newFixedThreadPool(effectiveThreads);
+        List<Future<?>> futures = new ArrayList<>();
+        for (int t = 0; t < effectiveThreads; t++) {
             futures.add(pool.submit(() -> {
                 try {
                     SimRunner runner = new SimRunner(orkFile);
-                    for (long i = startIdx; i < endIdx; i++) {
-                        if (Thread.currentThread().isInterrupted()) break;
-                        double[] vals = decode(i, counts, cfg);
-                        LaunchSite site = cfg.sites.get((int) vals[7]);
-                        EnvironmentPoint env = new EnvironmentPoint(vals[0], vals[1], vals[2] / 100.0, vals[3], vals[4], vals[5], vals[6], site);
-                        SimRunner.FlightResult r = runner.run(env);
-                        queue.put(new Object[]{vals, site, r});
-                        threadProgress.set(threadNum, i + 1);
+                    long[] block;
+                    while ((block = scheduler.claim()) != null) {
+                        for (long i = block[0]; i < block[0] + block[1]; i++) {
+                            if (Thread.currentThread().isInterrupted()) return null;
+                            java.util.function.LongPredicate injector = failureInjector;
+                            if (injector != null && injector.test(i)) {
+                                throw new IllegalStateException("injected worker failure at index " + i);
+                            }
+                            double[] vals = decode(i, counts, cfg);
+                            LaunchSite site = cfg.sites.get((int) vals[7]);
+                            EnvironmentPoint env = new EnvironmentPoint(vals[0], vals[1], vals[2] / 100.0, vals[3], vals[4], vals[5], vals[6], site);
+                            runner.setSeed(seedFor(cfg.baseSeed, i));
+                            SimRunner.FlightResult r = runner.run(env);
+                            queue.put(new SweepResult(i, block[0], vals, site, r));
+                        }
                     }
                 } catch (InterruptedException ignored) {
-
-                } catch (Exception e) {
+                    Thread.currentThread().interrupt();
+                } catch (Throwable e) {
+                    // Record the first failure; the writer loop notices it instead of waiting forever for rows that will never arrive.
+                    workerFailure.compareAndSet(null, e);
                     e.printStackTrace();
+                } finally {
+                    liveWorkers.decrementAndGet();
                 }
                 return null;
             }));
@@ -156,7 +179,8 @@ public class FullFactorialSweep {
                 new MiniParquet.Column("meets_both", MiniParquet.ColType.BOOLEAN),
                 new MiniParquet.Column("condition", MiniParquet.ColType.STRING),
                 new MiniParquet.Column("ok", MiniParquet.ColType.BOOLEAN),
-                new MiniParquet.Column("error", MiniParquet.ColType.STRING)
+                new MiniParquet.Column("error", MiniParquet.ColType.STRING),
+                new MiniParquet.Column("grid_index", MiniParquet.ColType.DOUBLE)
         );
 
         long processed = 0;
@@ -174,70 +198,50 @@ public class FullFactorialSweep {
         RunningStats.Correlation corrRodAngleTime = new RunningStats.Correlation();
 
         Exception failure = null;
+        boolean cancelled = false;
         try (MiniParquet.Writer writer = new MiniParquet.Writer(outFile, columns, ROWS_PER_ROW_GROUP)) {
 
             LaunchSite baselineSite = cfg.sites.get(0);
             SimRunner baselineRunner = new SimRunner(orkFile);
             EnvironmentPoint stpEnv = EnvironmentPoint.stpBaseline(baselineSite);
             SimRunner.FlightResult stpResult = baselineRunner.run(stpEnv);
-            writeRow(writer, stpEnv.windSpeedAvgMs, stpEnv.windSpeedStdDevMs, stpEnv.turbulenceIntensity * 100.0,
+            writeRow(cfg, writer, -1, stpEnv.windSpeedAvgMs, stpEnv.windSpeedStdDevMs, stpEnv.turbulenceIntensity * 100.0,
                     stpEnv.windDirectionDeg, stpEnv.temperatureC, stpEnv.pressureMbar, stpEnv.rodAngleDeg, baselineSite.label,
                     stpResult, "STP_ZERO_BASELINE");
 
-            while (processed < remaining) {
-                if (Thread.currentThread().isInterrupted()) {
-                    long safeResumeIndex = total;
-                    for (int t = 0; t < threadProgress.length(); t++) {
-                        safeResumeIndex = Math.min(safeResumeIndex, threadProgress.get(t));
-                    }
-                    System.out.println("Cancelled after " + processed + " / " + remaining + " combinations. " +
-                            "Safe resume index: " + safeResumeIndex + " (every index below this is guaranteed complete).");
-                    pool.shutdownNow();
+            while (true) {
+                SweepResult entry;
+                try {
+                    entry = queue.poll(500, TimeUnit.MILLISECONDS);
+                } catch (InterruptedException ie) {
+                    cancelled = true;
                     break;
                 }
-                Object[] entry = queue.take();
-                double[] vals = (double[]) entry[0];
-                LaunchSite site = (LaunchSite) entry[1];
-                SimRunner.FlightResult r = (SimRunner.FlightResult) entry[2];
-
-                writeRow(writer, vals[0], vals[1], vals[2], vals[3], vals[4], vals[5], vals[6], site.label, r, "full_factorial");
-
-                if (r.ok) {
-                    boolean meetsApogee = Math.abs(r.apogeeM - TARGET_APOGEE_M) <= APOGEE_TOLERANCE_M;
-                    boolean meetsTime = Math.abs(r.flightTimeS - TARGET_TIME_CENTER_S) <= TIME_TOLERANCE_S;
-                    if (meetsApogee && meetsTime) meetsBoth++;
-                    apogeeStats.add(r.apogeeM);
-                    timeStats.add(r.flightTimeS);
-                    corrWindApogee.addPair(vals[0], r.apogeeM);
-                    corrTempApogee.addPair(vals[4], r.apogeeM);
-                    corrPressureApogee.addPair(vals[5], r.apogeeM);
-                    corrWindTime.addPair(vals[0], r.flightTimeS);
-                    corrTempTime.addPair(vals[4], r.flightTimeS);
-                    corrPressureTime.addPair(vals[5], r.flightTimeS);
-                    corrRodAngleApogee.addPair(vals[6], r.apogeeM);
-                    corrRodAngleTime.addPair(vals[6], r.flightTimeS);
-
-                    double apogeeErrNorm = Math.abs(r.apogeeM - TARGET_APOGEE_M) / Math.max(APOGEE_TOLERANCE_M, 1e-9);
-                    double timeErrNorm = Math.abs(r.flightTimeS - TARGET_TIME_CENTER_S) / Math.max(TIME_TOLERANCE_S, 1e-9);
-                    double combinedErr = apogeeErrNorm + timeErrNorm;
-                    String detail = String.format("wind %.1f±%.1f m/s @%.0f°, turb %.1f%%, %.1f°C, %.0f mbar, rod %.0f°, %s",
-                            vals[0], vals[1], vals[3], vals[2], vals[4], vals[5], vals[6], site.label);
-                    if (leaderboard.offer(combinedErr, r.apogeeM, r.flightTimeS, detail)) {
-                        leaderboardListener.onUpdate(leaderboard.snapshot());
-                    }
+                if (entry == null) {
+                    // Nothing arrived. Stop when no worker is left to produce more; that is the case both after a
+                    // normal finish and after a worker died with an exception (workerFailure is set then).
+                    if (liveWorkers.get() == 0 && queue.isEmpty()) break;
+                    continue;
                 }
-
                 processed++;
+                meetsBoth += consume(cfg, entry, writer, scheduler, leaderboard, leaderboardListener, apogeeStats, timeStats,
+                        corrWindApogee, corrTempApogee, corrPressureApogee, corrWindTime, corrTempTime, corrPressureTime,
+                        corrRodAngleApogee, corrRodAngleTime);
                 if (processed % 1_000 == 0 || processed == remaining) {
                     listener.onProgress(processed, remaining, etaTracker.etaSeconds(processed));
                 }
             }
 
-            for (Future<?> f : futures) {
-                try {
-                    f.get();
-                } catch (Exception ignored) {
-
+            if (cancelled || workerFailure.get() != null) {
+                pool.shutdownNow();
+                pool.awaitTermination(10, TimeUnit.SECONDS);
+                // Rows already simulated and sitting in the queue are real results: write them rather than throw them away.
+                SweepResult leftover;
+                while ((leftover = queue.poll()) != null) {
+                    processed++;
+                    meetsBoth += consume(cfg, leftover, writer, scheduler, leaderboard, leaderboardListener, apogeeStats, timeStats,
+                            corrWindApogee, corrTempApogee, corrPressureApogee, corrWindTime, corrTempTime, corrPressureTime,
+                            corrRodAngleApogee, corrRodAngleTime);
                 }
             }
             pool.shutdown();
@@ -246,18 +250,18 @@ public class FullFactorialSweep {
             pool.shutdownNow();
         }
 
-        boolean cancelled = Thread.currentThread().isInterrupted() || failure instanceof InterruptedException;
-        boolean incomplete = failure != null || cancelled || processed < remaining;
-        long safeResumeIndex = total;
-        for (int t = 0; t < threadProgress.length(); t++) {
-            safeResumeIndex = Math.min(safeResumeIndex, threadProgress.get(t));
+        if (failure == null && workerFailure.get() != null) {
+            Throwable t = workerFailure.get();
+            failure = (t instanceof Exception) ? (Exception) t : new RuntimeException(t);
         }
+        boolean incomplete = failure != null || cancelled || processed < remaining;
+        long safeResumeIndex = scheduler.safeResumeIndex();
         File summaryFile = new File(outFile.getParentFile(), OutputNaming.baseName(outFile) + "_summary.csv");
-        writeSummaryCsv(summaryFile, processed, remaining, total, startIndex, meetsBoth, apogeeStats, timeStats,
+        writeSummaryCsv(cfg, summaryFile, processed, remaining, total, startIndex, meetsBoth, apogeeStats, timeStats,
                 corrWindApogee, corrTempApogee, corrPressureApogee,
                 corrWindTime, corrTempTime, corrPressureTime,
                 corrRodAngleApogee, corrRodAngleTime, incomplete, cancelled, failure,
-                incomplete ? safeResumeIndex : -1);
+                incomplete ? safeResumeIndex : -1, secPerSim);
 
         System.out.println("Wrote " + processed + " combinations to " + outFile.getAbsolutePath());
         if (incomplete) {
@@ -273,19 +277,152 @@ public class FullFactorialSweep {
         return outFile;
     }
 
-    private static void writeRow(MiniParquet.Writer writer, double windAvg, double windStdDev, double turbulencePct,
+    /** One finished simulation on its way from a worker to the writer. */
+    static final class SweepResult {
+        final long index;
+        final long blockStart;
+        final double[] vals;
+        final LaunchSite site;
+        final SimRunner.FlightResult result;
+
+        SweepResult(long index, long blockStart, double[] vals, LaunchSite site, SimRunner.FlightResult result) {
+            this.index = index;
+            this.blockStart = blockStart;
+            this.vals = vals;
+            this.site = site;
+            this.result = result;
+        }
+    }
+
+    /**
+     * Hands out contiguous blocks of grid indices to whichever worker is free, and tracks which blocks have been
+     * fully written to disk. Every index below {@link #safeResumeIndex()} is on disk, so a resume can start there.
+     * Unlike a fixed split of the grid into one chunk per thread, a slow thread no longer drags the resume point back
+     * to the start of its own chunk.
+     */
+    static final class BlockScheduler {
+        private final long end;
+        private final int blockSize;
+        private long next;
+        /** block start -> rows of that block not yet written. */
+        private final TreeMap<Long, Integer> pending = new TreeMap<>();
+
+        BlockScheduler(long start, long end, int blockSize) {
+            this.next = start;
+            this.end = end;
+            this.blockSize = blockSize;
+        }
+
+        synchronized long[] claim() {
+            if (next >= end) return null;
+            long start = next;
+            int len = (int) Math.min(blockSize, end - start);
+            next = start + len;
+            pending.put(start, len);
+            return new long[]{start, len};
+        }
+
+        synchronized void written(long blockStart) {
+            Integer left = pending.get(blockStart);
+            if (left == null) return;
+            if (left <= 1) pending.remove(blockStart);
+            else pending.put(blockStart, left - 1);
+        }
+
+        synchronized long safeResumeIndex() {
+            return pending.isEmpty() ? Math.min(next, end) : pending.firstKey();
+        }
+    }
+
+    private static int consume(GridAxis.SweepConfig cfg, SweepResult entry, MiniParquet.Writer writer, BlockScheduler scheduler,
+                                TopNLeaderboard leaderboard, LeaderboardListener leaderboardListener,
+                                RunningStats apogeeStats, RunningStats timeStats,
+                                RunningStats.Correlation corrWindApogee, RunningStats.Correlation corrTempApogee,
+                                RunningStats.Correlation corrPressureApogee, RunningStats.Correlation corrWindTime,
+                                RunningStats.Correlation corrTempTime, RunningStats.Correlation corrPressureTime,
+                                RunningStats.Correlation corrRodAngleApogee, RunningStats.Correlation corrRodAngleTime) throws Exception {
+        double[] vals = entry.vals;
+        SimRunner.FlightResult r = entry.result;
+        writeRow(cfg, writer, entry.index, vals[0], vals[1], vals[2], vals[3], vals[4], vals[5], vals[6], entry.site.label, r, "full_factorial");
+        scheduler.written(entry.blockStart);
+
+        int meets = 0;
+        if (r.ok) {
+            boolean meetsApogee = Math.abs(r.apogeeM - cfg.targetApogeeM) <= cfg.apogeeToleranceM;
+            boolean meetsTime = Math.abs(r.flightTimeS - cfg.targetTimeS) <= cfg.timeToleranceS;
+            if (meetsApogee && meetsTime) meets = 1;
+            apogeeStats.add(r.apogeeM);
+            timeStats.add(r.flightTimeS);
+            corrWindApogee.addPair(vals[0], r.apogeeM);
+            corrTempApogee.addPair(vals[4], r.apogeeM);
+            corrPressureApogee.addPair(vals[5], r.apogeeM);
+            corrWindTime.addPair(vals[0], r.flightTimeS);
+            corrTempTime.addPair(vals[4], r.flightTimeS);
+            corrPressureTime.addPair(vals[5], r.flightTimeS);
+            corrRodAngleApogee.addPair(vals[6], r.apogeeM);
+            corrRodAngleTime.addPair(vals[6], r.flightTimeS);
+
+            double apogeeErrNorm = Math.abs(r.apogeeM - cfg.targetApogeeM) / Math.max(cfg.apogeeToleranceM, 1e-9);
+            double timeErrNorm = Math.abs(r.flightTimeS - cfg.targetTimeS) / Math.max(cfg.timeToleranceS, 1e-9);
+            double combinedErr = apogeeErrNorm + timeErrNorm;
+            String detail = String.format("wind %.1f±%.1f m/s @%.0f°, turb %.1f%%, %.1f°C, %.0f mbar, rod %.0f°, %s",
+                    vals[0], vals[1], vals[3], vals[2], vals[4], vals[5], vals[6], entry.site.label);
+            if (leaderboard.offer(combinedErr, r.apogeeM, r.flightTimeS, detail)) {
+                leaderboardListener.onUpdate(leaderboard.snapshot());
+            }
+        }
+        return meets;
+    }
+
+    /**
+     * Times {@link #CALIBRATION_SIMS} simulations spread evenly over the remaining grid (so the mix of easy and hard
+     * conditions is representative) on one thread, after discarding a warm-up run. Returns seconds per simulation.
+     */
+    static double calibrate(File orkFile, GridAxis.SweepConfig cfg, long startIndex, long total) throws Exception {
+        long remaining = total - startIndex;
+        int n = (int) Math.min(CALIBRATION_SIMS, remaining);
+        if (n <= 0) return 0.0;
+        long[] counts = {
+                cfg.windAvg.count(), cfg.windStdDev.count(), cfg.turbulencePct.count(),
+                cfg.windDir.count(), cfg.temp.count(), cfg.pressure.count(), cfg.rodAngle.count(), cfg.sites.size()
+        };
+        SimRunner runner = new SimRunner(orkFile);
+        runner.setSeed(cfg.baseSeed);
+        long stride = Math.max(1, remaining / n);
+        {
+            double[] v = decode(startIndex, counts, cfg);
+            runner.run(new EnvironmentPoint(v[0], v[1], v[2] / 100.0, v[3], v[4], v[5], v[6], cfg.sites.get((int) v[7])));
+        }
+        long t0 = System.nanoTime();
+        for (int k = 0; k < n; k++) {
+            long idx = Math.min(total - 1, startIndex + k * stride);
+            double[] v = decode(idx, counts, cfg);
+            runner.setSeed(seedFor(cfg.baseSeed, idx));
+            runner.run(new EnvironmentPoint(v[0], v[1], v[2] / 100.0, v[3], v[4], v[5], v[6], cfg.sites.get((int) v[7])));
+        }
+        return (System.nanoTime() - t0) / 1e9 / n;
+    }
+
+    /** Wind-noise seed for one grid index: reproducible, and independent between neighbouring indices. */
+    static long seedFor(long baseSeed, long index) {
+        return baseSeed + index * 0x9E3779B97F4A7C15L;
+    }
+
+    private static void writeRow(GridAxis.SweepConfig cfg, MiniParquet.Writer writer, long gridIndex,
+                                  double windAvg, double windStdDev, double turbulencePct,
                                   double windDir, double temp, double pressure, double rodAngle, String siteLabel,
                                   SimRunner.FlightResult r, String condition) throws Exception {
-        boolean meetsApogee = r.ok && Math.abs(r.apogeeM - TARGET_APOGEE_M) <= APOGEE_TOLERANCE_M;
-        boolean meetsTime = r.ok && Math.abs(r.flightTimeS - TARGET_TIME_CENTER_S) <= TIME_TOLERANCE_S;
+        boolean meetsApogee = r.ok && Math.abs(r.apogeeM - cfg.targetApogeeM) <= cfg.apogeeToleranceM;
+        boolean meetsTime = r.ok && Math.abs(r.flightTimeS - cfg.targetTimeS) <= cfg.timeToleranceS;
         writer.writeRow(new Object[]{
                 windAvg, windStdDev, turbulencePct, windDir, temp, pressure, rodAngle, siteLabel,
                 r.ok ? r.apogeeM : Double.NaN, r.ok ? r.flightTimeS : Double.NaN,
-                meetsApogee, meetsTime, meetsApogee && meetsTime, condition, r.ok, r.ok ? "" : (r.error == null ? "" : r.error)
+                meetsApogee, meetsTime, meetsApogee && meetsTime, condition, r.ok, r.ok ? "" : (r.error == null ? "" : r.error),
+                (double) gridIndex
         });
     }
 
-    private static double[] decode(long index, long[] counts, GridAxis.SweepConfig cfg) {
+    static double[] decode(long index, long[] counts, GridAxis.SweepConfig cfg) {
         long i = index;
         long siteIdx = i % counts[7]; i /= counts[7];
         long rodIdx = i % counts[6]; i /= counts[6];
@@ -308,7 +445,7 @@ public class FullFactorialSweep {
         };
     }
 
-    private static void writeSummaryCsv(File summaryFile, long processed, long plannedTotal, long fullGridTotal,
+    private static void writeSummaryCsv(GridAxis.SweepConfig cfg, File summaryFile, long processed, long plannedTotal, long fullGridTotal,
                                          long startIndex, long meetsBoth,
                                          RunningStats apogeeStats, RunningStats timeStats,
                                          RunningStats.Correlation corrWindApogee, RunningStats.Correlation corrTempApogee,
@@ -318,7 +455,7 @@ public class FullFactorialSweep {
                                          RunningStats.Correlation corrRodAngleApogee,
                                          RunningStats.Correlation corrRodAngleTime,
                                          boolean incomplete, boolean cancelled, Exception failure,
-                                         long safeResumeIndex) throws Exception {
+                                         long safeResumeIndex, double calibratedSecPerSim) throws Exception {
         try (PrintWriter pw = new PrintWriter(new FileWriter(summaryFile))) {
             pw.println(CsvUtil.row("metric", "value"));
             if (incomplete) {
@@ -335,8 +472,10 @@ public class FullFactorialSweep {
             pw.println(CsvUtil.row("Full grid size (all sites/conditions)", fullGridTotal));
             pw.println(CsvUtil.row("Combinations planned this run", plannedTotal));
             pw.println(CsvUtil.row("Combinations completed", processed));
-            pw.println(CsvUtil.row("Combinations meeting BOTH targets (apogee " + TARGET_APOGEE_M + "m +/- " +
-                    APOGEE_TOLERANCE_M + "m, time " + TARGET_TIME_CENTER_S + "s +/- " + TIME_TOLERANCE_S + "s)", meetsBoth));
+            pw.println(CsvUtil.row("Wind-noise base seed (each grid index derives its own seed from this)", cfg.baseSeed));
+            pw.println(CsvUtil.row("Calibrated ms per simulation (one thread)", calibratedSecPerSim * 1000));
+            pw.println(CsvUtil.row("Combinations meeting BOTH targets (apogee " + cfg.targetApogeeM + "m +/- " +
+                    cfg.apogeeToleranceM + "m, time " + cfg.targetTimeS + "s +/- " + cfg.timeToleranceS + "s)", meetsBoth));
             pw.println(CsvUtil.row("Success rate", processed > 0 ? (double) meetsBoth / processed : 0.0));
             pw.println(CsvUtil.row("Mean apogee (m)", apogeeStats.mean()));
             pw.println(CsvUtil.row("Std dev apogee (m)", apogeeStats.stddev()));

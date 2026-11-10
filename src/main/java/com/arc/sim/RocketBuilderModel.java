@@ -61,6 +61,20 @@ public class RocketBuilderModel {
         return new RocketBuilderModel(doc, fcid);
     }
 
+    /** The ARC V2 template (CAD airframe, MOD1E motor / parachute / payload / ballast). Falls back to a blank rocket. */
+    public static RocketBuilderModel newFromCadTemplate() {
+        return newFromCadTemplate(PrintMaterial.current());
+    }
+
+    public static RocketBuilderModel newFromCadTemplate(PrintMaterial material) {
+        try {
+            return loadFromOrk(CadTemplate.extractBundled(material));
+        } catch (Exception e) {
+            System.err.println("Could not load the bundled ARC V2 template (" + e.getMessage() + "); starting blank.");
+            return newRocket();
+        }
+    }
+
     public static RocketBuilderModel loadFromOrk(File orkFile) throws Exception {
         GeneralRocketLoader loader = new GeneralRocketLoader(orkFile);
         OpenRocketDocument doc = loader.load();

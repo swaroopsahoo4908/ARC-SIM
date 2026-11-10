@@ -49,7 +49,7 @@ public class RocketBuilderPanel extends JPanel {
     public RocketBuilderPanel() {
         super(new BorderLayout(8, 8));
         setBorder(new EmptyBorder(12, 12, 12, 12));
-        this.model = RocketBuilderModel.newRocket();
+        this.model = RocketBuilderModel.newFromCadTemplate();
         buildUi();
         refreshAll();
     }
@@ -59,6 +59,7 @@ public class RocketBuilderPanel extends JPanel {
 
         JPanel toolbar = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
         JButton newButton = new JButton("New Rocket");
+        newButton.setToolTipText("Starts from the ARC V2 CAD template (airframe and fins from the CAD, motor, parachute and ballast from CSWARCMOD1E). Printed in the material picked in the preview: PLA Basic or PLA Aero");
         JButton openButton = new JButton("Open .ork...");
         JButton saveButton = new JButton("Save");
         JButton saveAsButton = new JButton("Save As...");
@@ -162,7 +163,7 @@ public class RocketBuilderPanel extends JPanel {
 
     private void doNew() {
         if (!confirmDiscardIfDirty()) return;
-        model = RocketBuilderModel.newRocket();
+        model = RocketBuilderModel.newFromCadTemplate();
         currentFile = null;
         dirty = false;
         refreshAll();

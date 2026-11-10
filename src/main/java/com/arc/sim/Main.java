@@ -23,9 +23,10 @@ public class Main {
     private static void printUsage() {
         System.out.println("Usage:");
         System.out.println("  Engine 1 (TRUE full-factorial sweep, every combination, rocket held fixed):");
-        System.out.println("    java -jar arc-sim.jar fullsweep <input.ork> <sweep_grid.properties> [outputDir] [--force]");
+        System.out.println("    java -jar arc-sim.jar fullsweep <input.ork> <sweep_grid.properties> [outputDir] [--force] [--resume=N]");
         System.out.println();
-        System.out.println("  Engine 2  (solve ballast + fin height + fin sweep for one fixed atmosphere):");
+        System.out.println("  Engine 2 (solve ballast mass, fin height and parachute spill-hole radius for one fixed atmosphere;");
+        System.out.println("            fin sweep is held at its original value):");
         System.out.println("    java -jar arc-sim.jar design <input.ork> <targetApogeeM> <targetTimeMinS> <targetTimeMaxS> \\");
         System.out.println("        <site> <windAvgMs> <windStdDevMs> <turbulencePct> <windDirDeg> <tempC> <pressureMbar>");
         System.out.println();

@@ -160,9 +160,9 @@ public class ArcSimGui extends JFrame {
         form.addRow("Launch sites (swept over all checked):", siteSelector);
 
         JComboBox<String> presetCombo = new JComboBox<>(new String[]{
-                "Quick (~16k combos/site -- fast preview)",
-                "Standard (~18.3M combos/site -- default resolution)",
-                "Exhaustive (~73M combos/site -- 4x finer wind avg & direction)"
+                "Quick (~675 combos/site -- fast preview)",
+                "Standard (~72.8k combos/site -- default resolution)",
+                "Fine (~1.6M combos/site -- finer wind, turbulence, temperature, pressure, rod angle)"
         });
         presetCombo.setSelectedIndex(1);
         form.addRow("Grid preset:", presetCombo);
@@ -171,9 +171,11 @@ public class ArcSimGui extends JFrame {
 
         presetCombo.addActionListener(e -> {
             int[][] presets = {
-                    {5, 3, 3, 8, 5, 3, 3},
-                    {45, 7, 7, 36, 11, 7, 3},
-                    {90, 7, 7, 72, 11, 7, 3},
+                    // wind avg, wind std dev, turbulence, wind dir, temp, pressure, rod angle.
+                    // Std dev and direction stay at one point: the wind model ignores the first and the second moves apogee under 0.05 m.
+                    {5, 1, 3, 1, 5, 3, 3},
+                    {45, 1, 7, 1, 11, 7, 3},
+                    {90, 1, 13, 1, 21, 13, 5},
             };
             int[] counts = presets[presetCombo.getSelectedIndex()];
             windAvgAxis.min.setValue(0.0); windAvgAxis.max.setValue(22.0); windAvgAxis.count.setValue(counts[0]);
@@ -279,11 +281,20 @@ public class ArcSimGui extends JFrame {
                     resumeFrom = 0;
                 }
                 long remaining = Math.max(0, total - Math.min(resumeFrom, total));
-                double estSec = remaining * 0.03;
                 System.out.printf("Grid total: %,d combinations%s%n", total,
                         resumeFrom > 0 ? String.format(" (%,d remaining after resume index %,d)", remaining, resumeFrom) : "");
-                System.out.printf("Estimated time: ~%.1f hours single-threaded, ~%.1f hours across %d threads%n",
-                        estSec / 3600.0, estSec / 3600.0 / cfg.threads, cfg.threads);
+                File orkForTiming = new File(orkField.getText().trim());
+                if (remaining > 0 && orkForTiming.isFile()) {
+                    System.out.println("Timing a few simulations on this machine to estimate the runtime...");
+                    double secPerSim = FullFactorialSweep.calibrate(orkForTiming, cfg, Math.min(resumeFrom, total), total);
+                    double estSec = remaining * secPerSim;
+                    int usable = Math.max(1, Math.min(cfg.threads, Runtime.getRuntime().availableProcessors()));
+                    System.out.printf("Measured %.0f ms per simulation on one thread.%n", secPerSim * 1000);
+                    System.out.printf("Estimated time: ~%.1f hours single-threaded, ~%.1f hours across %d threads (assumes near-linear scaling)%n",
+                            estSec / 3600.0, estSec / 3600.0 / usable, usable);
+                } else if (remaining > 0) {
+                    System.out.println("Choose a rocket .ork file above to get a timed runtime estimate.");
+                }
                 if (remaining > cfg.maxCombosSafety) {
                     System.out.println("This EXCEEDS the safety cap (" + cfg.maxCombosSafety +
                             ") -- you'll need to check 'Force' or coarsen the grid to actually run it.");
@@ -411,7 +422,7 @@ public class ArcSimGui extends JFrame {
 
         RocketPreviewPanel previewPanel = new RocketPreviewPanel();
         previewPanel.setPreferredSize(new Dimension(880, 180));
-        previewPanel.setBorder(BorderFactory.createTitledBorder("Rocket preview (approximate schematic, not to-scale CAD)"));
+        previewPanel.setBorder(BorderFactory.createTitledBorder("Rocket preview"));
 
         SiteSelector siteSelector = new SiteSelector();
         JSpinner targetApogee = new JSpinner(new SpinnerNumberModel(243.84, 0.0, 100000.0, 1.0));
@@ -595,7 +606,7 @@ public class ArcSimGui extends JFrame {
         RocketPreviewPanel previewPanel = new RocketPreviewPanel();
         previewPanel.setShowPointMasses(false);
         previewPanel.setPreferredSize(new Dimension(880, 180));
-        previewPanel.setBorder(BorderFactory.createTitledBorder("Rocket preview (approximate schematic, not to-scale CAD)"));
+        previewPanel.setBorder(BorderFactory.createTitledBorder("Rocket preview"));
 
         JCheckBox stlBox = new JCheckBox("STL", true);
         JCheckBox objBox = new JCheckBox("OBJ", true);
@@ -633,10 +644,12 @@ public class ArcSimGui extends JFrame {
         formatRow.add(stlBox);
         formatRow.add(objBox);
         form.addRow("Export format(s):", formatRow);
+        form.addRow("Mesh source:", new MeshSourceCheckBox("Use ARC V2 CAD model (unchecked = generated mesh)"));
         form.addDirRow("Output folder (blank = \"" + OutputNaming.CAD_FILES_FOLDER + "\" next to the rocket file):", outDirField);
-        form.addRow("", hintLabel("Basic body-of-revolution + flat-fin mesh (not CAD-fidelity) -- good for a " +
-                "quick 3D-print / CAD-import sanity check of the outer mold line, not a substitute for real CAD " +
-                "geometry. No wall thickness, internal components, or airfoil fin sections. Units: millimeters. " +
+        form.addRow("", hintLabel("With 'ARC V2 CAD model' ticked (top right of the preview), an ARC V2 airframe exports the " +
+                "real CAD geometry (thin-wall shells, airfoil fins resized to the loaded fin set, motor mount). " +
+                "Unticked, or for any other rocket, it exports the generated body-of-revolution + flat-fin mesh, " +
+                "which has no wall thickness, internals or airfoil sections. Units: millimeters. " +
                 "Each run gets its own new subfolder (&lt;rocketName&gt;_geometry_&lt;timestamp&gt;/) inside the " +
                 "output folder above, so nothing is ever overwritten and every export's files stay together."));
 
@@ -659,7 +672,9 @@ public class ArcSimGui extends JFrame {
             runJob("Geometry Exporter", listener -> {
                 File runDir = OutputNaming.uniqueDir(ork, outDir, "geometry");
                 String base = OutputNaming.baseName(ork);
-                List<MeshExporter.Triangle> tris = MeshExporter.buildMesh(geo);
+                boolean useCad = MeshSource.useCad();
+                System.out.println("Mesh source: " + (useCad ? "ARC V2 CAD model (when the airframe matches)" : "generated mesh"));
+                List<MeshExporter.Triangle> tris = MeshExporter.buildMesh(geo, useCad);
                 System.out.println("Built mesh: " + tris.size() + " triangles. Writing to " + runDir.getAbsolutePath());
                 File written = null;
                 if (doStl) {
@@ -833,7 +848,7 @@ public class ArcSimGui extends JFrame {
         RocketPreviewPanel previewPanel = new RocketPreviewPanel();
         previewPanel.setShowPointMasses(false);
         previewPanel.setPreferredSize(new Dimension(880, 160));
-        previewPanel.setBorder(BorderFactory.createTitledBorder("Rocket preview (approximate schematic, not to-scale CAD)"));
+        previewPanel.setBorder(BorderFactory.createTitledBorder("Rocket preview"));
 
         final SimRunner[] inspectedRunner = new SimRunner[1];
 
@@ -927,6 +942,7 @@ public class ArcSimGui extends JFrame {
         bindPersistentText("engine4.outDir", outDirField);
         FormBuilder outputForm = new FormBuilder();
         outputForm.addDirRow("Output folder (blank = \"" + OutputNaming.ENGINE_3_FOLDER + "\" next to the rocket file):", outDirField);
+        outputForm.addRow("CAD export mesh:", new MeshSourceCheckBox("Use ARC V2 CAD model for the main design and margin fin sets (unchecked = generated mesh)"));
         outputForm.addRow("", hintLabel("Each run gets its own new subfolder (&lt;rocketName&gt;_weatherdesign_&lt;timestamp&gt;/) " +
                 "inside the output folder above -- the solved .ork, both CAD exports, the local sweep .xlsx, and all " +
                 "four margin fin CAD pairs land together in that one run subfolder."));
@@ -1579,6 +1595,34 @@ public class ArcSimGui extends JFrame {
                 }
             });
             buttonsPanel.add(browse);
+            if (open && "ork".equals(ext)) {
+                JButton arc = new JButton("ARC V2 template \u25BE");
+                arc.setToolTipText("Use the bundled ARC V2 CAD rocket, printed in PLA Basic or PLA Aero");
+                arc.addActionListener(e -> {
+                    javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
+                    for (PrintMaterial m : PrintMaterial.values()) {
+                        javax.swing.JMenuItem item = new javax.swing.JMenuItem(m.toString());
+                        item.addActionListener(ev -> {
+                            try {
+                                File dir = new File(AppConfig.appDir(), "OpenRocket");
+                                dir.mkdirs();
+                                File dest = new File(dir, m.templateFileName());
+                                java.nio.file.Files.copy(CadTemplate.extractBundled(m).toPath(), dest.toPath(),
+                                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                                field.setText(dest.getPath());
+                                PrintMaterial.setCurrent(m);
+                            } catch (Exception ex) {
+                                javax.swing.JOptionPane.showMessageDialog(ArcSimGui.this,
+                                        "Could not write the template: " + ex.getMessage(), "ARC V2 template",
+                                        javax.swing.JOptionPane.ERROR_MESSAGE);
+                            }
+                        });
+                        menu.add(item);
+                    }
+                    menu.show(arc, 0, arc.getHeight());
+                });
+                buttonsPanel.add(arc);
+            }
             rowPanel.add(buttonsPanel, BorderLayout.EAST);
 
             GridBagConstraints c = new GridBagConstraints();

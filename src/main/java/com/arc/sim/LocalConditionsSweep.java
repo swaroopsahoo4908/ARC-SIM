@@ -52,6 +52,8 @@ public class LocalConditionsSweep {
                 double pressure = Distributions.gaussian(rng, centerPressureMbar, PRESSURE_SPREAD_MBAR / 2.0);
 
                 EnvironmentPoint env = new EnvironmentPoint(windAvg, windStdDevMs, turbulencePct / 100.0, windDir, temp, pressure, site);
+                // Each sample gets its own gust realisation; a shared seed would make all samples see the same gusts.
+                runner.setSeed(rng.nextLong());
                 SimRunner.FlightResult r = runner.run(env);
 
                 Row row = dataSheet.createRow(rowNum++);
@@ -97,6 +99,9 @@ public class LocalConditionsSweep {
                 wb.write(fos);
             }
             wb.dispose();
+        } finally {
+            // The runner is reused by the caller afterwards, where a repeatable objective matters more than random gusts.
+            runner.setSeed(SimRunner.DEFAULT_SEED);
         }
 
         System.out.println("Wrote " + sampleCount + " local-conditions samples to " + outFile.getAbsolutePath());

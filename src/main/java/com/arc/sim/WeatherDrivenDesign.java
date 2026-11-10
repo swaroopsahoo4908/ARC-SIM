@@ -65,8 +65,9 @@ public class WeatherDrivenDesign {
         double targetTimeCenterS = (targetTimeMinS + targetTimeMaxS) / 2.0;
 
         File runDir = OutputNaming.uniqueDir(orkFile, outDir, "weatherdesign");
+        final boolean useCadMesh = MeshSource.useCad();
 
-        System.out.println("=== ENGINE 4: Weather-Driven Design ===");
+        System.out.println("=== ENGINE 3: Weather-Driven Design ===");
         System.out.println("Writing this run's output to: " + runDir.getAbsolutePath());
         System.out.printf("Weather @ %s (fetched %s): wind %.2f m/s (gust %.2f m/s, std dev used %.2f m/s), " +
                         "dir %.0f deg, %.1f C, %.1f mbar -- \"%s\"%n",
@@ -120,7 +121,8 @@ public class WeatherDrivenDesign {
 
         if (Thread.currentThread().isInterrupted()) return result;
         RocketGeometryExtractor.Geometry mainGeo = RocketGeometryExtractor.extract(rocket);
-        List<MeshExporter.Triangle> mainMesh = MeshExporter.buildMesh(mainGeo);
+        System.out.println("Mesh source: " + (useCadMesh ? "ARC V2 CAD model (when the airframe matches)" : "generated mesh"));
+        List<MeshExporter.Triangle> mainMesh = MeshExporter.buildMesh(mainGeo, useCadMesh);
         result.mainCadStl = OutputNaming.uniqueFile(orkFile, runDir, "weatherdesign", "stl");
         MeshExporter.writeStl(mainMesh, result.mainCadStl, orkFile.getName());
         result.mainCadObj = OutputNaming.uniqueFile(orkFile, runDir, "weatherdesign", "obj");
@@ -165,7 +167,7 @@ public class WeatherDrivenDesign {
         runner.run(new EnvironmentPoint(weather.windAvgMs, windStdDevMs, turbulencePct / 100.0,
                 weather.windDirDeg, weather.tempC, weather.pressureMbar, site));
 
-        System.out.println("=== ENGINE 4 complete ===");
+        System.out.println("=== ENGINE 3 complete ===");
         return result;
     }
 
@@ -173,6 +175,7 @@ public class WeatherDrivenDesign {
                                                        double fixedSweepM, WeatherClient.Reading weather, double windStdDevMs,
                                                        double turbulencePct, LaunchSite site, double targetApogeeM,
                                                        File orkFile, File runDir) {
+        final boolean useCadMesh = MeshSource.useCad();
         return () -> {
             if (Thread.currentThread().isInterrupted()) return null;
             SimRunner marginRunner = new SimRunner(mainSolve.savedOrkFile);
@@ -212,7 +215,7 @@ public class WeatherDrivenDesign {
             if (Thread.currentThread().isInterrupted()) return null;
 
             RocketGeometryExtractor.Geometry marginGeo = RocketGeometryExtractor.extract(marginRocket);
-            List<MeshExporter.Triangle> finMesh = MeshExporter.buildFinSetMesh(marginGeo.fins);
+            List<MeshExporter.Triangle> finMesh = MeshExporter.buildFinSetMesh(marginGeo.fins, useCadMesh);
             String tag = ("finset_wind" + String.format("%.2f", marginWindMs) + "ms").replace('.', '_');
             File finStl = OutputNaming.uniqueFile(orkFile, runDir, tag, "stl");
             MeshExporter.writeStl(finMesh, finStl, orkFile.getName() + "_" + tag);

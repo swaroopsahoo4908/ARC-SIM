@@ -34,7 +34,53 @@ public class MeshExporter {
         }
     }
 
+    /** Builds the mesh from whichever source the shared {@link MeshSource} setting selects. */
     public static List<Triangle> buildMesh(RocketGeometryExtractor.Geometry geo) {
+        return buildMesh(geo, MeshSource.useCad());
+    }
+
+    /**
+     * With preferCad, the bundled ARC V2 CAD model is used when the rocket is the ARC V2 airframe (fins are conformed
+     * to the rocket's own fin set). Anything else falls back to the generated mesh, so the file always describes the
+     * rocket that was loaded.
+     */
+    public static List<Triangle> buildMesh(RocketGeometryExtractor.Geometry geo, boolean preferCad) {
+        if (preferCad) {
+            String why = CadModel.get().mismatch(geo);
+            if (why == null) return CadModel.get().buildMesh(geo);
+            System.out.println("ARC V2 CAD model not used (" + why + "); exporting the generated mesh instead.");
+        }
+        return buildGeneratedMesh(geo);
+    }
+
+    /** The generated mesh as a flat triangle soup with per-triangle classes (airframe, fin, appendage), for viewers. */
+    public static CadModel.Flat generatedFlat(RocketGeometryExtractor.Geometry geo) {
+        List<Triangle> body = new ArrayList<>();
+        for (RocketGeometryExtractor.BodyShape b : geo.bodies) addBodyOfRevolution(body, b);
+        if (!geo.bodies.isEmpty()) {
+            RocketGeometryExtractor.BodyShape last = geo.bodies.get(geo.bodies.size() - 1);
+            addEndCap(body, last.xStart + last.length, last.aftRadius, false);
+        }
+        List<Triangle> fins = buildFinSetMesh(geo.fins, false);
+        List<Triangle> other = new ArrayList<>();
+        for (RocketGeometryExtractor.AppendageShape a : geo.appendages) addAppendage(other, a);
+        int n = body.size() + fins.size() + other.size();
+        float[] xyz = new float[n * 9];
+        byte[] cls = new byte[n];
+        int k = 0;
+        List<List<Triangle>> groups = List.of(body, fins, other);
+        byte[] classes = {CadModel.CLASS_AIRFRAME, CadModel.CLASS_FIN, CadModel.CLASS_INTERNAL};
+        for (int g = 0; g < groups.size(); g++) {
+            for (Triangle t : groups.get(g)) {
+                for (int c = 0; c < 3; c++)
+                    for (int d = 0; d < 3; d++) xyz[k * 9 + c * 3 + d] = (float) t.v[c][d];
+                cls[k++] = classes[g];
+            }
+        }
+        return new CadModel.Flat(xyz, cls);
+    }
+
+    public static List<Triangle> buildGeneratedMesh(RocketGeometryExtractor.Geometry geo) {
         List<Triangle> tris = new ArrayList<>();
         for (RocketGeometryExtractor.BodyShape body : geo.bodies) {
             addBodyOfRevolution(tris, body);
@@ -83,6 +129,12 @@ public class MeshExporter {
     }
 
     public static List<Triangle> buildFinSetMesh(List<RocketGeometryExtractor.FinShape> fins) {
+        return buildFinSetMesh(fins, MeshSource.useCad());
+    }
+
+    /** CAD fins are the real airfoil sections, resized to the requested planform; generated fins are flat plates. */
+    public static List<Triangle> buildFinSetMesh(List<RocketGeometryExtractor.FinShape> fins, boolean preferCad) {
+        if (preferCad && !fins.isEmpty()) return CadModel.get().buildFinMesh(fins);
         List<Triangle> tris = new ArrayList<>();
         for (RocketGeometryExtractor.FinShape fin : fins) {
             addFinSet(tris, fin);
@@ -214,7 +266,7 @@ public class MeshExporter {
     public static void writeObj(List<Triangle> tris, File out, String objectName) throws IOException {
         try (PrintWriter pw = new PrintWriter(out, StandardCharsets.UTF_8)) {
             pw.println("# Exported by ARC Rocket Simulation Toolkit -- Geometry Exporter");
-            pw.println("# Basic body-of-revolution + flat-fin approximation, units millimeters");
+            pw.println("# Units millimeters; x runs from the nose tip aft");
             pw.println("o " + sanitize(objectName));
             int vIdx = 1;
             for (Triangle t : tris) {
